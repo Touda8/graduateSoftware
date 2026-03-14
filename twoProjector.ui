@@ -394,17 +394,17 @@ QGroupBox::title {
               </layout>
              </item>
              <item>
-              <layout class="QHBoxLayout" name="resCalPro2Row">
-               <item><widget class="QLabel" name="resLblCalPro2"><property name="text"><string>标定文件Pro2:</string></property></widget></item>
-               <item><widget class="QLineEdit" name="resEditCalPro2"><property name="text"><string></string></property><property name="placeholderText"><string>备用标定目录（可留空）</string></property></widget></item>
-               <item><widget class="QPushButton" name="resBtnCalPro2Browse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              <layout class="QHBoxLayout" name="resScanPro1Row">
+               <item><widget class="QLabel" name="resLblScanPro1"><property name="text"><string>Pro1扫描文件夹:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="resEditScanPro1"><property name="text"><string>data/pic/BGA静态/1/1</string></property><property name="placeholderText"><string>选择Pro1的图像子文件夹, 如 .../1/1</string></property></widget></item>
+               <item><widget class="QPushButton" name="resBtnScanPro1Browse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
               </layout>
              </item>
              <item>
-              <layout class="QHBoxLayout" name="resScanRow">
-               <item><widget class="QLabel" name="resLblScan"><property name="text"><string>扫描图像文件夹:</string></property></widget></item>
-               <item><widget class="QLineEdit" name="resEditScanFolder"><property name="text"><string>data/pic/BGA静态</string></property><property name="placeholderText"><string>选择包含 1/ 和 2/ 子目录的扫描文件夹</string></property></widget></item>
-               <item><widget class="QPushButton" name="resBtnScanBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              <layout class="QHBoxLayout" name="resScanPro2Row">
+               <item><widget class="QLabel" name="resLblScanPro2"><property name="text"><string>Pro2扫描文件夹:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="resEditScanPro2"><property name="text"><string>data/pic/BGA静态/2/1</string></property><property name="placeholderText"><string>Pro2的图像子文件夹（自动填充）</string></property></widget></item>
+               <item><widget class="QPushButton" name="resBtnScanPro2Browse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
               </layout>
              </item>
              <item>
@@ -605,6 +605,20 @@ QGroupBox::title {
                <item><widget class="QLabel" name="resLblSavePath"><property name="text"><string>保存路径:</string></property></widget></item>
                <item><widget class="QLineEdit" name="resEditSavePath"><property name="text"><string>D:/Scan/MonocularDual/260226/bga/info</string></property></widget></item>
                <item><widget class="QPushButton" name="resBtnSavePathBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="resMultiRootRow">
+               <item><widget class="QLabel" name="resLblMultiRoot"><property name="text"><string>多次重建路径:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="resEditMultiRoot"><property name="text"><string>data/pic/BGA静态</string></property><property name="placeholderText"><string>包含 1/ 和 2/ 子目录的根路径</string></property></widget></item>
+               <item><widget class="QPushButton" name="resBtnMultiRootBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="resMultiSaveRow">
+               <item><widget class="QLabel" name="resLblMultiSavePath"><property name="text"><string>多次重建保存:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="resEditMultiSavePath"><property name="placeholderText"><string>多次重建点云保存目录</string></property></widget></item>
+               <item><widget class="QPushButton" name="resBtnMultiSavePathBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
               </layout>
              </item>
             </layout>
@@ -1212,6 +1226,20 @@ QListWidget::item:selected { background: #3399ff; color: white; }</string></prop
                </item>
               </layout>
              </item>
+             <item>
+              <layout class="QHBoxLayout" name="bgaImgFolderRow">
+               <item><widget class="QLabel" name="bgaLblImgFolder"><property name="text"><string>图像文件夹:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="bgaEditImgFolder"><property name="placeholderText"><string>包含 1.bmp, 2.bmp ... 的文件夹</string></property></widget></item>
+               <item><widget class="QPushButton" name="bgaBtnImgFolderBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="bgaCloudFolderRow">
+               <item><widget class="QLabel" name="bgaLblCloudFolder"><property name="text"><string>点云文件夹:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="bgaEditCloudFolder"><property name="placeholderText"><string>包含 1.ply, 2.ply ... 的文件夹</string></property></widget></item>
+               <item><widget class="QPushButton" name="bgaBtnCloudFolderBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
              <item><widget class="QPushButton" name="bgaBtnStart"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>开始测量</string></property></widget></item>
              <item><widget class="QPushButton" name="bgaBtnPlot"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>数据画图</string></property></widget></item>
              <item><widget class="QPushButton" name="bgaBtnBallShow"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>焊球定位显示</string></property></widget></item>
@@ -1229,6 +1257,29 @@ QListWidget::item:selected { background: #3399ff; color: white; }</string></prop
               <widget class="QTextEdit" name="bgaDataText">
                <property name="readOnly"><bool>false</bool></property>
                <property name="placeholderText"><string>共面度测量结果将在此显示...</string></property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- BGA日志 -->
+          <item>
+           <widget class="QGroupBox" name="bgaLogGroupBox">
+            <property name="title"><string>测量日志</string></property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
+              <horstretch>0</horstretch><verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <layout class="QVBoxLayout" name="bgaLogLayout">
+             <property name="topMargin"><number>2</number></property>
+             <property name="bottomMargin"><number>2</number></property>
+             <item>
+              <widget class="QTextEdit" name="bgaLogText">
+               <property name="readOnly"><bool>true</bool></property>
+               <property name="placeholderText"><string>BGA测量日志...</string></property>
+               <property name="minimumSize"><size><width>0</width><height>80</height></size></property>
+               <property name="maximumSize"><size><width>16777215</width><height>100</height></size></property>
               </widget>
              </item>
             </layout>
@@ -1305,6 +1356,20 @@ QListWidget::item:selected { background: #3399ff; color: white; }</string></prop
                </item>
               </layout>
              </item>
+             <item>
+              <layout class="QHBoxLayout" name="qfpImgFolderRow">
+               <item><widget class="QLabel" name="qfpLblImgFolder"><property name="text"><string>图像文件夹:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="qfpEditImgFolder"><property name="placeholderText"><string>包含 1.bmp, 2.bmp ... 的文件夹</string></property></widget></item>
+               <item><widget class="QPushButton" name="qfpBtnImgFolderBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="qfpCloudFolderRow">
+               <item><widget class="QLabel" name="qfpLblCloudFolder"><property name="text"><string>点云文件夹:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="qfpEditCloudFolder"><property name="placeholderText"><string>包含 1.ply, 2.ply ... 的文件夹</string></property></widget></item>
+               <item><widget class="QPushButton" name="qfpBtnCloudFolderBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
              <item><widget class="QPushButton" name="qfpBtnStart"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>开始测量</string></property></widget></item>
              <item><widget class="QPushButton" name="qfpBtnPlot"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>数据画图</string></property></widget></item>
              <item><widget class="QPushButton" name="qfpBtnPinShow"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>引脚分割显示</string></property></widget></item>
@@ -1322,6 +1387,29 @@ QListWidget::item:selected { background: #3399ff; color: white; }</string></prop
               <widget class="QTextEdit" name="qfpDataText">
                <property name="readOnly"><bool>false</bool></property>
                <property name="placeholderText"><string>QFP共面度/翘曲度结果将在此显示...</string></property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- QFP日志 -->
+          <item>
+           <widget class="QGroupBox" name="qfpLogGroupBox">
+            <property name="title"><string>测量日志</string></property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
+              <horstretch>0</horstretch><verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <layout class="QVBoxLayout" name="qfpLogLayout">
+             <property name="topMargin"><number>2</number></property>
+             <property name="bottomMargin"><number>2</number></property>
+             <item>
+              <widget class="QTextEdit" name="qfpLogText">
+               <property name="readOnly"><bool>true</bool></property>
+               <property name="placeholderText"><string>QFP测量日志...</string></property>
+               <property name="minimumSize"><size><width>0</width><height>80</height></size></property>
+               <property name="maximumSize"><size><width>16777215</width><height>100</height></size></property>
               </widget>
              </item>
             </layout>

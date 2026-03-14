@@ -6,6 +6,7 @@
 #include <vtkGenericOpenGLRenderWindow.h>
 #include <vtkActor.h>
 #include <vtkProp3D.h>
+#include <vtkScalarBarActor.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
@@ -35,6 +36,7 @@ private:
     vtkSmartPointer<vtkGenericOpenGLRenderWindow> renderWindow_;
     vtkSmartPointer<vtkProp3D> gridActor_;
     vtkSmartPointer<vtkActor> cloudActor_;
+    vtkSmartPointer<vtkScalarBarActor> scalarBar_;
 };
 
 } // namespace tp

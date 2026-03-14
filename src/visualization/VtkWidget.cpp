@@ -5,13 +5,18 @@
 #include <vtkPoints.h>
 #include <vtkCellArray.h>
 #include <vtkUnsignedCharArray.h>
+#include <vtkFloatArray.h>
 #include <vtkPointData.h>
 #include <vtkLookupTable.h>
+#include <vtkScalarBarActor.h>
+#include <vtkTextProperty.h>
 #include <vtkCamera.h>
 #include <vtkAxesActor.h>
 #include <vtkProperty.h>
 #include <vtkWindowToImageFilter.h>
 #include <vtkPNGWriter.h>
+#include <limits>
+#include <cmath>
 
 namespace tp {
 
@@ -32,26 +37,62 @@ void VtkWidget::updateCloud(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud) {
 
     auto points = vtkSmartPointer<vtkPoints>::New();
     auto cells  = vtkSmartPointer<vtkCellArray>::New();
+    auto zArray = vtkSmartPointer<vtkFloatArray>::New();
+    zArray->SetNumberOfComponents(1);
+    zArray->SetName("Depth");
+
     points->SetNumberOfPoints(static_cast<vtkIdType>(cloud->size()));
+
+    float zMin = std::numeric_limits<float>::max();
+    float zMax = std::numeric_limits<float>::lowest();
 
     for (vtkIdType i = 0; i < static_cast<vtkIdType>(cloud->size()); ++i) {
         const auto& pt = (*cloud)[i];
+        if (!std::isfinite(pt.z)) continue;
         points->SetPoint(i, pt.x, pt.y, pt.z);
         cells->InsertNextCell(1, &i);
+        zArray->InsertNextValue(pt.z);
+        if (pt.z < zMin) zMin = pt.z;
+        if (pt.z > zMax) zMax = pt.z;
     }
 
     auto polyData = vtkSmartPointer<vtkPolyData>::New();
     polyData->SetPoints(points);
     polyData->SetVerts(cells);
+    polyData->GetPointData()->SetScalars(zArray);
+
+    // JET-like lookup table
+    auto lut = vtkSmartPointer<vtkLookupTable>::New();
+    lut->SetTableRange(zMin, zMax);
+    lut->SetHueRange(0.667, 0.0); // blue→red
+    lut->SetSaturationRange(1.0, 1.0);
+    lut->SetValueRange(1.0, 1.0);
+    lut->Build();
 
     auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
     mapper->SetInputData(polyData);
+    mapper->SetLookupTable(lut);
+    mapper->SetScalarRange(zMin, zMax);
 
     auto actor = vtkSmartPointer<vtkActor>::New();
     actor->SetMapper(mapper);
+    actor->GetProperty()->SetPointSize(2);
+
+    // Scalar bar (colorbar)
+    if (scalarBar_) renderer_->RemoveActor2D(scalarBar_);
+    scalarBar_ = vtkSmartPointer<vtkScalarBarActor>::New();
+    scalarBar_->SetLookupTable(lut);
+    scalarBar_->SetTitle("Z (mm)");
+    scalarBar_->SetNumberOfLabels(5);
+    scalarBar_->GetTitleTextProperty()->SetFontSize(12);
+    scalarBar_->GetLabelTextProperty()->SetFontSize(10);
+    scalarBar_->SetWidth(0.08);
+    scalarBar_->SetHeight(0.6);
+    scalarBar_->SetPosition(0.9, 0.2);
 
     renderer_->RemoveAllViewProps();
     renderer_->AddActor(actor);
+    renderer_->AddActor2D(scalarBar_);
     cloudActor_ = actor;
     renderer_->ResetCamera();
     renderWindow_->Render();
@@ -96,6 +137,7 @@ void VtkWidget::updateCloud(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud) {
 
 void VtkWidget::clearCloud() {
     renderer_->RemoveAllViewProps();
+    if (scalarBar_) { renderer_->RemoveActor2D(scalarBar_); scalarBar_ = nullptr; }
     renderWindow_->Render();
 }
 

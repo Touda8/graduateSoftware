@@ -5,8 +5,40 @@
 #include <pcl/io/pcd_io.h>
 #include <fstream>
 #include <filesystem>
+#include <vector>
 
 namespace tp {
+
+namespace {
+// Windows 上 PCL 内部使用 fopen() 处理 ANSI 路径，无法加载含中文的 UTF-8 路径。
+// 检测是否含有非 ASCII 字符；若有则复制到临时文件后加载。
+bool hasNonAscii(const std::string& s) {
+    for (unsigned char c : s) if (c > 127) return true;
+    return false;
+}
+
+// 将文件复制到 %TEMP% 下的纯 ASCII 临时路径，返回临时路径
+std::string copyToTempIfNeeded(const std::string& utf8Path,
+                               const std::string& ext) {
+    if (!hasNonAscii(utf8Path)) return utf8Path;
+    auto srcPath = std::filesystem::u8path(utf8Path);
+    if (!std::filesystem::exists(srcPath))
+        throw IOException("file not found (u8): " + utf8Path);
+    auto tmpDir = std::filesystem::temp_directory_path() / "tp_pcl_tmp";
+    std::filesystem::create_directories(tmpDir);
+    auto tmpFile = tmpDir / ("cloud_tmp" + ext);
+    std::filesystem::copy_file(srcPath, tmpFile,
+        std::filesystem::copy_options::overwrite_existing);
+    return tmpFile.string();
+}
+
+void removeTempIfUsed(const std::string& original, const std::string& actual) {
+    if (original != actual) {
+        std::error_code ec;
+        std::filesystem::remove(std::filesystem::path(actual), ec);
+    }
+}
+} // namespace
 
 void PointCloudIO::savePLY(CloudPtr cloud, const std::string& path) {
     if (!cloud || cloud->empty()) {
@@ -74,11 +106,15 @@ void PointCloudIO::saveCSV(CloudPtr cloud, const std::string& path) {
 
 // 功能：加载PLY文件，输入：path，返回：点云指针
 PointCloudIO::CloudPtr PointCloudIO::loadPLY(const std::string& path) {
-    if (!std::filesystem::exists(path)) {
+    auto fsPath = std::filesystem::u8path(path);
+    if (!std::filesystem::exists(fsPath)) {
         throw IOException("loadPLY: file not found: " + path);
     }
+    std::string actualPath = copyToTempIfNeeded(path, ".ply");
     auto cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-    if (pcl::io::loadPLYFile(path, *cloud) != 0) {
+    int ret = pcl::io::loadPLYFile(actualPath, *cloud);
+    removeTempIfUsed(path, actualPath);
+    if (ret != 0) {
         throw IOException("loadPLY: failed to read " + path);
     }
     Logger::instance().info("Loaded PLY: " + path
@@ -88,11 +124,15 @@ PointCloudIO::CloudPtr PointCloudIO::loadPLY(const std::string& path) {
 
 // 功能：加载PCD文件，输入：path，返回：点云指针
 PointCloudIO::CloudPtr PointCloudIO::loadPCD(const std::string& path) {
-    if (!std::filesystem::exists(path)) {
+    auto fsPath = std::filesystem::u8path(path);
+    if (!std::filesystem::exists(fsPath)) {
         throw IOException("loadPCD: file not found: " + path);
     }
+    std::string actualPath = copyToTempIfNeeded(path, ".pcd");
     auto cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-    if (pcl::io::loadPCDFile(path, *cloud) != 0) {
+    int ret = pcl::io::loadPCDFile(actualPath, *cloud);
+    removeTempIfUsed(path, actualPath);
+    if (ret != 0) {
         throw IOException("loadPCD: failed to read " + path);
     }
     Logger::instance().info("Loaded PCD: " + path
@@ -102,7 +142,7 @@ PointCloudIO::CloudPtr PointCloudIO::loadPCD(const std::string& path) {
 
 // 功能：根据扩展名自动加载点云，输入：path，返回：点云指针
 PointCloudIO::CloudPtr PointCloudIO::load(const std::string& path) {
-    auto ext = std::filesystem::path(path).extension().string();
+    auto ext = std::filesystem::u8path(path).extension().string();
     // 统一小写
     for (auto& ch : ext) ch = static_cast<char>(std::tolower(
         static_cast<unsigned char>(ch)));

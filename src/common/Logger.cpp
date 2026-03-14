@@ -13,7 +13,17 @@ Logger& Logger::instance() {
 
 Logger::Logger() {
     std::filesystem::create_directories("logs");
-    file_.open("logs/app.log", std::ios::app);
+    // 生成带时间戳的日志文件名：app_YYYYMMDD_HHMMSS.log
+    using namespace std::chrono;
+    auto now = system_clock::now();
+    auto tt  = system_clock::to_time_t(now);
+    std::tm buf{};
+    localtime_s(&buf, &tt);
+    std::ostringstream fname;
+    fname << "logs/app_"
+          << std::put_time(&buf, "%Y%m%d_%H%M%S")
+          << ".log";
+    file_.open(fname.str(), std::ios::app);
 }
 
 Logger::~Logger() noexcept {

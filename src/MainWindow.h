@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QMenu>
 #include <memory>
 #include "common/interfaces.h"
 #include "reconstruction/CalibLoader.h"
@@ -29,16 +30,20 @@ public:
 signals:
     // 日志追加（可从工作线程 emit）
     void logMessage(const QString& msg);
+    void bgaLogMessage(const QString& msg);
+    void qfpLogMessage(const QString& msg);
     // 进度更新（可从工作线程 emit）
     void progressUpdated(int percent);
 
 private slots:
     // ---- resWidget: 文件设置按钮 ----
     void onResBtnCalPro1BrowseClicked();
-    void onResBtnCalPro2BrowseClicked();
-    void onResBtnScanBrowseClicked();
+    void onResBtnScanPro1BrowseClicked();
+    void onResBtnScanPro2BrowseClicked();
     void onResBtnEpiBrowseClicked();
     void onResBtnSavePathBrowseClicked();
+    void onResBtnMultiRootBrowseClicked();
+    void onResBtnMultiSavePathBrowseClicked();
     void onResBtnTogglePanelClicked();
 
     // ---- resWidget: 重建控制按钮 ----
@@ -73,6 +78,7 @@ private slots:
 
     // ---- 点云处理按钮 ----
     void onPcBtnImportCloudClicked();
+    void onPcCloudListContextMenu(const QPoint& pos);
     void onPcBtnCropROIClicked();
     void onPcBtnCropPlaneClicked();
     void onPcBtnSubsampleClicked();
@@ -128,6 +134,8 @@ private slots:
     void onBgaBtnBallShowClicked();
     void onBgaBtnImportClicked();
     void onBgaBtnSaveClicked();
+    void onBgaBtnImgFolderBrowseClicked();
+    void onBgaBtnCloudFolderBrowseClicked();
 
     // ---- qfpWidget ----
     void onQfpSpinCountChanged(int val);
@@ -136,6 +144,8 @@ private slots:
     void onQfpBtnPinShowClicked();
     void onQfpBtnImportClicked();
     void onQfpBtnSaveClicked();
+    void onQfpBtnImgFolderBrowseClicked();
+    void onQfpBtnCloudFolderBrowseClicked();
 
     // ---- capWidget: 投影仪控制 ----
     void updateProStatusLabel(int projIdx, bool connected);
@@ -143,12 +153,16 @@ private slots:
 
     // ---- 内部辅助 ----
     void appendLog(const QString& msg);
+    void appendBgaLog(const QString& msg);
+    void appendQfpLog(const QString& msg);
     void setState(State s);
 
 private:
     void setupConnections();
     void initVtkWidget();
     void setupProjectorManager();
+    void startSingleReconstruction();
+    void startMultiReconstruction();
 
     Ui::twoProjectorClass* ui;
     State state_ = State::IDLE;
@@ -159,4 +173,5 @@ private:
     tp::DualCalibData dualCalib_;
     pcl::PointCloud<pcl::PointXYZ>::Ptr currentCloud_;
     tp::PointCloudFilter filter_;
+    std::vector<double> bgaCoplanarities_;
 };

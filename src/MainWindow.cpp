@@ -11,10 +11,15 @@
 #include <QTimer>
 #include <QDir>
 #include <QVBoxLayout>
+#include <QFileInfo>
+#include <QListWidgetItem>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include "measurement/BGADetector.h"
+#include "measurement/BGAMeasurePipeline.h"
 
 namespace {
 // Windows 上 cv::imread 使用 ANSI 代码页，无法处理 UTF-8 中文路径。
@@ -50,6 +55,7 @@ MainWindow::MainWindow(QWidget* parent)
     setupConnections();
     setupProjectorManager();
     tp::Config::instance().load(this);
+    onResComboSaveModeChanged(ui->resComboSaveMode->currentIndex());
     setState(State::IDLE);
     tp::Logger::instance().info("MainWindow constructor completed successfully");
 }
@@ -86,14 +92,18 @@ void MainWindow::setupConnections() {
     // ---- resWidget: 文件设置按钮 ----
     connect(ui->resBtnCalPro1Browse, &QPushButton::clicked,
             this, &MainWindow::onResBtnCalPro1BrowseClicked);
-    connect(ui->resBtnCalPro2Browse, &QPushButton::clicked,
-            this, &MainWindow::onResBtnCalPro2BrowseClicked);
-    connect(ui->resBtnScanBrowse, &QPushButton::clicked,
-            this, &MainWindow::onResBtnScanBrowseClicked);
+    connect(ui->resBtnScanPro1Browse, &QPushButton::clicked,
+            this, &MainWindow::onResBtnScanPro1BrowseClicked);
+    connect(ui->resBtnScanPro2Browse, &QPushButton::clicked,
+            this, &MainWindow::onResBtnScanPro2BrowseClicked);
     connect(ui->resBtnEpiBrowse, &QPushButton::clicked,
             this, &MainWindow::onResBtnEpiBrowseClicked);
     connect(ui->resBtnSavePathBrowse, &QPushButton::clicked,
             this, &MainWindow::onResBtnSavePathBrowseClicked);
+    connect(ui->resBtnMultiRootBrowse, &QPushButton::clicked,
+            this, &MainWindow::onResBtnMultiRootBrowseClicked);
+    connect(ui->resBtnMultiSavePathBrowse, &QPushButton::clicked,
+            this, &MainWindow::onResBtnMultiSavePathBrowseClicked);
     connect(ui->resBtnTogglePanel, &QPushButton::clicked,
             this, &MainWindow::onResBtnTogglePanelClicked);
 
@@ -156,6 +166,10 @@ void MainWindow::setupConnections() {
     // ---- 点云处理按钮 ----
     connect(ui->pcBtnImportCloud, &QPushButton::clicked,
             this, &MainWindow::onPcBtnImportCloudClicked);
+    // 点云列表右键菜单
+    ui->pcCloudListWidget->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->pcCloudListWidget, &QWidget::customContextMenuRequested,
+            this, &MainWindow::onPcCloudListContextMenu);
     connect(ui->pcBtnCropROI, &QPushButton::clicked,
             this, &MainWindow::onPcBtnCropROIClicked);
     connect(ui->pcBtnCropPlane, &QPushButton::clicked,
@@ -249,6 +263,19 @@ void MainWindow::setupConnections() {
     connect(ui->pcSpinTransZ, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, &MainWindow::onPcSpinTransZChanged);
 
+    // ---- Pro1 路径变化时自动填充 Pro2 ----
+    connect(ui->resEditScanPro1, &QLineEdit::textChanged,
+            this, [this](const QString& text) {
+        QDir dir(text);
+        QString measureDir = dir.dirName();
+        if (!dir.cdUp()) return;
+        QString projDir = dir.dirName();
+        if (projDir == "1") {
+            if (!dir.cdUp()) return;
+            ui->resEditScanPro2->setText(dir.absolutePath() + "/2/" + measureDir);
+        }
+    });
+
     // ---- bgaWidget ----
     connect(ui->bgaSpinCount, QOverload<int>::of(&QSpinBox::valueChanged),
             this, &MainWindow::onBgaSpinCountChanged);
@@ -262,6 +289,10 @@ void MainWindow::setupConnections() {
             this, &MainWindow::onBgaBtnImportClicked);
     connect(ui->bgaBtnSave, &QPushButton::clicked,
             this, &MainWindow::onBgaBtnSaveClicked);
+    connect(ui->bgaBtnImgFolderBrowse, &QPushButton::clicked,
+            this, &MainWindow::onBgaBtnImgFolderBrowseClicked);
+    connect(ui->bgaBtnCloudFolderBrowse, &QPushButton::clicked,
+            this, &MainWindow::onBgaBtnCloudFolderBrowseClicked);
 
     // ---- qfpWidget ----
     connect(ui->qfpSpinCount, QOverload<int>::of(&QSpinBox::valueChanged),
@@ -276,10 +307,18 @@ void MainWindow::setupConnections() {
             this, &MainWindow::onQfpBtnImportClicked);
     connect(ui->qfpBtnSave, &QPushButton::clicked,
             this, &MainWindow::onQfpBtnSaveClicked);
+    connect(ui->qfpBtnImgFolderBrowse, &QPushButton::clicked,
+            this, &MainWindow::onQfpBtnImgFolderBrowseClicked);
+    connect(ui->qfpBtnCloudFolderBrowse, &QPushButton::clicked,
+            this, &MainWindow::onQfpBtnCloudFolderBrowseClicked);
 
     // ---- 内部日志/进度信号 (QueuedConnection for thread safety) ----
     connect(this, &MainWindow::logMessage,
             this, &MainWindow::appendLog, Qt::QueuedConnection);
+    connect(this, &MainWindow::bgaLogMessage,
+            this, &MainWindow::appendBgaLog, Qt::QueuedConnection);
+    connect(this, &MainWindow::qfpLogMessage,
+            this, &MainWindow::appendQfpLog, Qt::QueuedConnection);
     connect(this, &MainWindow::progressUpdated,
             ui->resProgressBar, &QProgressBar::setValue, Qt::QueuedConnection);
 }
@@ -296,13 +335,26 @@ void MainWindow::setState(State s) {
     const bool busy  = (s == State::RECONSTRUCTING || s == State::CALIB_LOADING);
 
     ui->resBtnLoadCalib->setEnabled(!busy);
-    ui->resBtnStartRebuild->setEnabled(ready);
+    ui->resBtnStartRebuild->setEnabled(ready || done);
     ui->resBtnSaveCloud->setEnabled(done);
 }
 
 void MainWindow::appendLog(const QString& msg) {
-    ui->resLogText->append(
+    auto line = QDateTime::currentDateTime().toString("[hh:mm:ss] ") + msg;
+    ui->resLogText->append(line);
+    tp::Logger::instance().info(msg.toStdString());
+}
+
+void MainWindow::appendBgaLog(const QString& msg) {
+    ui->bgaLogText->append(
         QDateTime::currentDateTime().toString("[hh:mm:ss] ") + msg);
+    tp::Logger::instance().info(("BGA: " + msg).toStdString());
+}
+
+void MainWindow::appendQfpLog(const QString& msg) {
+    ui->qfpLogText->append(
+        QDateTime::currentDateTime().toString("[hh:mm:ss] ") + msg);
+    tp::Logger::instance().info(("QFP: " + msg).toStdString());
 }
 
 void MainWindow::appendCapLog(const QString& msg) {
@@ -519,16 +571,16 @@ void MainWindow::onResBtnCalPro1BrowseClicked() {
     if (!dir.isEmpty()) ui->resEditCalPro1->setText(dir);
 }
 
-void MainWindow::onResBtnCalPro2BrowseClicked() {
+void MainWindow::onResBtnScanPro1BrowseClicked() {
     auto dir = QFileDialog::getExistingDirectory(this,
-        QStringLiteral("选择标定数据文件夹 (备用)"));
-    if (!dir.isEmpty()) ui->resEditCalPro2->setText(dir);
+        QStringLiteral("选择Pro1扫描图像文件夹 (如 BGA静态/1/1)"));
+    if (!dir.isEmpty()) ui->resEditScanPro1->setText(dir);
 }
 
-void MainWindow::onResBtnScanBrowseClicked() {
+void MainWindow::onResBtnScanPro2BrowseClicked() {
     auto dir = QFileDialog::getExistingDirectory(this,
-        QStringLiteral("选择扫描图像文件夹"));
-    if (!dir.isEmpty()) ui->resEditScanFolder->setText(dir);
+        QStringLiteral("选择Pro2扫描图像文件夹"));
+    if (!dir.isEmpty()) ui->resEditScanPro2->setText(dir);
 }
 
 void MainWindow::onResBtnEpiBrowseClicked() {
@@ -541,6 +593,18 @@ void MainWindow::onResBtnSavePathBrowseClicked() {
     auto dir = QFileDialog::getExistingDirectory(this,
         QStringLiteral("选择保存路径"));
     if (!dir.isEmpty()) ui->resEditSavePath->setText(dir);
+}
+
+void MainWindow::onResBtnMultiRootBrowseClicked() {
+    auto dir = QFileDialog::getExistingDirectory(this,
+        QStringLiteral("选择多次重建根目录 (包含 1/ 和 2/ 子目录)"));
+    if (!dir.isEmpty()) ui->resEditMultiRoot->setText(dir);
+}
+
+void MainWindow::onResBtnMultiSavePathBrowseClicked() {
+    auto dir = QFileDialog::getExistingDirectory(this,
+        QStringLiteral("选择多次重建保存目录"));
+    if (!dir.isEmpty()) ui->resEditMultiSavePath->setText(dir);
 }
 
 void MainWindow::onResBtnTogglePanelClicked() {
@@ -609,15 +673,24 @@ void MainWindow::onResBtnLoadCalibClicked() {
 }
 
 void MainWindow::onResBtnStartRebuildClicked() {
-    if (state_ != State::READY) {
+    if (state_ != State::READY && state_ != State::DONE) {
         appendLog(QStringLiteral("请先加载标定文件")); return;
     }
-    appendLog(QStringLiteral("开始重建..."));
+    int mode = ui->resComboSaveMode->currentIndex();
+    if (mode == 0) {
+        startSingleReconstruction();
+    } else {
+        startMultiReconstruction();
+    }
+}
+
+void MainWindow::startSingleReconstruction() {
+    appendLog(QStringLiteral("开始单次重建..."));
     setState(State::RECONSTRUCTING);
     emit progressUpdated(0);
 
-    // 解析扫描目录：同 calibDir 逻辑
-    QString scanDir = ui->resEditScanFolder->text().trimmed();
+    QString scanPro1Dir = ui->resEditScanPro1->text().trimmed();
+    QString scanPro2Dir = ui->resEditScanPro2->text().trimmed();
     auto resolveScanDir = [](const QString& input, const QString& defaultRel) -> QString {
         if (!input.isEmpty() && QDir(input).exists())
             return QDir(input).absolutePath();
@@ -628,16 +701,19 @@ void MainWindow::onResBtnStartRebuildClicked() {
             return exeDir.absoluteFilePath(defaultRel);
         return input;
     };
-    scanDir = resolveScanDir(scanDir, QStringLiteral("data/pic/BGA\u9759\u6001"));
-    appendLog(QStringLiteral("\u626b\u63cf\u8def\u5f84: ") + scanDir);
+    scanPro1Dir = resolveScanDir(scanPro1Dir, QStringLiteral("data/pic/BGA\u9759\u6001/1/1"));
+    scanPro2Dir = resolveScanDir(scanPro2Dir, QStringLiteral("data/pic/BGA\u9759\u6001/2/1"));
+    appendLog(QStringLiteral("Pro1\u8def\u5f84: ") + scanPro1Dir);
+    appendLog(QStringLiteral("Pro2\u8def\u5f84: ") + scanPro2Dir);
 
     auto params = reconParams_;
     auto calib = dualCalib_;
 
-    std::thread([this, dir = scanDir.toStdString(), params, calib]() {
+    std::thread([this, pro1Dir = scanPro1Dir.toStdString(),
+                 pro2Dir = scanPro2Dir.toStdString(), params, calib]() {
         try {
             emit progressUpdated(5);
-            emit logMessage(QStringLiteral("读取图像..."));
+            emit logMessage(QStringLiteral("\u8bfb\u53d6\u56fe\u50cf..."));
 
             auto loadImgs = [](const std::string& folder, int from, int to) {
                 std::vector<cv::Mat> imgs;
@@ -652,20 +728,22 @@ void MainWindow::onResBtnStartRebuildClicked() {
                 return imgs;
             };
 
-            auto imgs1 = loadImgs(dir + "/1", 1, 24);
+            auto fut1 = std::async(std::launch::async, loadImgs, pro1Dir, 1, 24);
+            auto fut2 = std::async(std::launch::async, loadImgs, pro2Dir, 1, 24);
+            auto imgs1 = fut1.get();
             emit progressUpdated(15);
-            auto imgs2 = loadImgs(dir + "/2", 1, 24);
+            auto imgs2 = fut2.get();
             emit progressUpdated(25);
 
-            cv::Mat colorImg = imreadSafe(dir + "/1/49.bmp", cv::IMREAD_GRAYSCALE);
+            cv::Mat colorImg = imreadSafe(pro1Dir + "/49.bmp", cv::IMREAD_GRAYSCALE);
             if (colorImg.empty())
-                colorImg = imreadSafe(dir + "/2/49.bmp", cv::IMREAD_GRAYSCALE);
+                colorImg = imreadSafe(pro2Dir + "/49.bmp", cv::IMREAD_GRAYSCALE);
             if (colorImg.empty() && !imgs1.empty()) {
                 colorImg = cv::Mat(imgs1[0].rows, imgs1[0].cols, CV_8U, cv::Scalar(128));
-                emit logMessage(QStringLiteral("警告：第49帧参考图不存在，使用纯灰替代"));
+                emit logMessage(QStringLiteral("\u8b66\u544a\uff1a\u7b2c49\u5e27\u53c2\u8003\u56fe\u4e0d\u5b58\u5728\uff0c\u4f7f\u7528\u7eaf\u7070\u66ff\u4ee3"));
             }
 
-            emit logMessage(QStringLiteral("执行重建流程..."));
+            emit logMessage(QStringLiteral("\u6267\u884c\u91cd\u5efa\u6d41\u7a0b..."));
             emit progressUpdated(30);
 
             tp::ReconstructionPipeline pipeline;
@@ -673,7 +751,7 @@ void MainWindow::onResBtnStartRebuildClicked() {
             emit progressUpdated(90);
 
             if (!result.success) {
-                emit logMessage(QString("重建失败: ") +
+                emit logMessage(QString("\u91cd\u5efa\u5931\u8d25: ") +
                     QString::fromStdString(result.errorMsg));
                 QMetaObject::invokeMethod(this, [this]() {
                     setState(State::READY);
@@ -683,9 +761,8 @@ void MainWindow::onResBtnStartRebuildClicked() {
 
             auto colorCloud = result.cloud;
             emit progressUpdated(100);
-            emit logMessage(QStringLiteral("重建完成: %1 点").arg(colorCloud->size()));
+            emit logMessage(QStringLiteral("\u91cd\u5efa\u5b8c\u6210: %1 \u70b9").arg(colorCloud->size()));
 
-            // Worker 线程中只生成 QImage（线程安全），QPixmap 转换在 Main 线程
             auto makeQImage = [](const cv::Mat& phaseMat) -> QImage {
                 if (phaseMat.empty()) return {};
                 cv::Mat norm;
@@ -701,22 +778,153 @@ void MainWindow::onResBtnStartRebuildClicked() {
             };
             QImage img1 = makeQImage(result.absPhase1);
             QImage img2 = makeQImage(result.absPhase2);
+            emit logMessage(QStringLiteral("相位图: Pro1=%1x%2 Pro2=%3x%4")
+                .arg(result.absPhase1.cols).arg(result.absPhase1.rows)
+                .arg(result.absPhase2.cols).arg(result.absPhase2.rows));
 
             QMetaObject::invokeMethod(this, [this, colorCloud, img1, img2]() {
-                // 所有 Qt GUI 操作在 Main 线程
                 currentCloud_ = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
                 for (const auto& pt : colorCloud->points)
                     currentCloud_->push_back({pt.x, pt.y, pt.z});
-                vtkWidget_->updateCloud(colorCloud);
+                vtkWidget_->updateCloud(currentCloud_);
+                // 将重建点云添加到点云列表
+                auto* item = new QListWidgetItem(
+                    QStringLiteral("重建点云 (%1 点)").arg(currentCloud_->size()));
+                item->setData(Qt::UserRole, QStringLiteral("__recon_current__"));
+                ui->pcCloudListWidget->addItem(item);
+                ui->pcCloudListWidget->setCurrentItem(item);
                 if (!img1.isNull())
-                    ui->resPhaseLabel1->setPixmap(QPixmap::fromImage(img1));
+                    ui->resPhaseLabel1->setPixmap(QPixmap::fromImage(img1).scaled(
+                        ui->resPhaseLabel1->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
                 if (!img2.isNull())
-                    ui->resPhaseLabel2->setPixmap(QPixmap::fromImage(img2));
+                    ui->resPhaseLabel2->setPixmap(QPixmap::fromImage(img2).scaled(
+                        ui->resPhaseLabel2->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
                 setState(State::DONE);
             }, Qt::QueuedConnection);
 
         } catch (const std::exception& e) {
-            emit logMessage(QString("重建错误: ") + e.what());
+            emit logMessage(QString("\u91cd\u5efa\u9519\u8bef: ") + e.what());
+            QMetaObject::invokeMethod(this, [this]() {
+                setState(State::READY);
+            }, Qt::QueuedConnection);
+        }
+    }).detach();
+}
+
+void MainWindow::startMultiReconstruction() {
+    appendLog(QStringLiteral("开始多次重建..."));
+    setState(State::RECONSTRUCTING);
+    emit progressUpdated(0);
+
+    QString rootDir = ui->resEditMultiRoot->text().trimmed();
+    QString saveDir = ui->resEditMultiSavePath->text().trimmed();
+
+    auto resolveDir = [](const QString& input, const QString& defaultRel) -> QString {
+        if (!input.isEmpty() && QDir(input).exists())
+            return QDir(input).absolutePath();
+        if (QDir(QDir::currentPath()).exists(defaultRel))
+            return QDir(QDir::currentPath()).absoluteFilePath(defaultRel);
+        QDir exeDir(QCoreApplication::applicationDirPath());
+        if (exeDir.cdUp() && exeDir.cdUp() && exeDir.exists(defaultRel))
+            return exeDir.absoluteFilePath(defaultRel);
+        return input;
+    };
+    rootDir = resolveDir(rootDir, QStringLiteral("data/pic/BGA\u9759\u6001"));
+
+    if (saveDir.isEmpty()) {
+        appendLog(QStringLiteral("请设置多次重建保存路径"));
+        setState(State::READY);
+        return;
+    }
+
+    auto params = reconParams_;
+    auto calib = dualCalib_;
+    int maxCount = ui->resSpinRepeatCount->value();
+
+    std::thread([this, root = rootDir.toStdString(),
+                 save = saveDir.toStdString(), params, calib, maxCount]() {
+        try {
+            namespace fs = std::filesystem;
+            fs::path pro1Root = fs::u8path(root) / "1";
+            fs::path pro2Root = fs::u8path(root) / "2";
+
+            std::vector<int> iterations;
+            for (auto& entry : fs::directory_iterator(pro1Root)) {
+                if (entry.is_directory()) {
+                    auto name = entry.path().filename().string();
+                    try { iterations.push_back(std::stoi(name)); }
+                    catch (...) {}
+                }
+            }
+            std::sort(iterations.begin(), iterations.end());
+            // 根据用户设置的重建次数截断
+            if (static_cast<int>(iterations.size()) > maxCount)
+                iterations.resize(maxCount);
+            int total = static_cast<int>(iterations.size());
+
+            emit logMessage(QStringLiteral("\u53d1\u73b0 %1 \u4e2a\u6d4b\u91cf\u5b50\u6587\u4ef6\u5939").arg(total));
+            fs::create_directories(fs::u8path(save));
+
+            auto loadImgs = [](const std::string& folder, int from, int to) {
+                std::vector<cv::Mat> imgs;
+                for (int i = from; i <= to; ++i) {
+                    auto path = folder + "/" + std::to_string(i) + ".bmp";
+                    cv::Mat img = imreadSafe(path, cv::IMREAD_GRAYSCALE);
+                    if (img.empty())
+                        throw tp::ImageLoadException("Cannot load: " + path);
+                    cv::Mat d; img.convertTo(d, CV_64F, 1.0 / 255.0);
+                    imgs.push_back(d);
+                }
+                return imgs;
+            };
+
+            for (int idx = 0; idx < total; ++idx) {
+                int iter = iterations[idx];
+                std::string pro1Dir = (pro1Root / std::to_string(iter)).string();
+                std::string pro2Dir = (pro2Root / std::to_string(iter)).string();
+
+                int overallPercent = (idx * 100) / total;
+                emit progressUpdated(overallPercent);
+                emit logMessage(QStringLiteral("\u91cd\u5efa\u7b2c %1/%2 \u6b21 (\u6587\u4ef6\u5939: %3)")
+                    .arg(idx + 1).arg(total).arg(iter));
+
+                auto f1 = std::async(std::launch::async, loadImgs, pro1Dir, 1, 24);
+                auto f2 = std::async(std::launch::async, loadImgs, pro2Dir, 1, 24);
+                auto imgs1 = f1.get();
+                auto imgs2 = f2.get();
+
+                cv::Mat colorImg = imreadSafe(pro1Dir + "/49.bmp", cv::IMREAD_GRAYSCALE);
+                if (colorImg.empty() && !imgs1.empty())
+                    colorImg = cv::Mat(imgs1[0].rows, imgs1[0].cols, CV_8U, cv::Scalar(128));
+
+                tp::ReconstructionPipeline pipeline;
+                auto result = pipeline.runDual(imgs1, imgs2, colorImg, calib, params);
+
+                if (!result.success) {
+                    emit logMessage(QStringLiteral("\u7b2c %1 \u6b21\u91cd\u5efa\u5931\u8d25: %2")
+                        .arg(iter).arg(QString::fromStdString(result.errorMsg)));
+                    continue;
+                }
+
+                auto savePath = fs::u8path(save) / (std::to_string(iter) + ".ply");
+                auto xyzCloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+                for (const auto& pt : result.cloud->points)
+                    xyzCloud->push_back({pt.x, pt.y, pt.z});
+
+                tp::PointCloudIO::savePLY(xyzCloud, savePath.string());
+                emit logMessage(QStringLiteral("\u7b2c %1 \u6b21\u70b9\u4e91\u5df2\u4fdd\u5b58: %2")
+                    .arg(iter).arg(QString::fromStdString(savePath.string())));
+            }
+
+            emit progressUpdated(100);
+            emit logMessage(QStringLiteral("\u591a\u6b21\u91cd\u5efa\u5b8c\u6210: \u5171 %1 \u6b21").arg(total));
+
+            QMetaObject::invokeMethod(this, [this]() {
+                setState(State::DONE);
+            }, Qt::QueuedConnection);
+
+        } catch (const std::exception& e) {
+            emit logMessage(QString("\u591a\u6b21\u91cd\u5efa\u9519\u8bef: ") + e.what());
             QMetaObject::invokeMethod(this, [this]() {
                 setState(State::READY);
             }, Qt::QueuedConnection);
@@ -795,7 +1003,14 @@ void MainWindow::onResDblSpinModLowChanged(double val) {
 }
 
 void MainWindow::onResComboSaveModeChanged(int index) {
-    ui->resSpinRepeatCount->setEnabled(index == 1);
+    bool isMulti = (index == 1);
+    ui->resSpinRepeatCount->setEnabled(isMulti);
+    ui->resEditMultiRoot->setVisible(isMulti);
+    ui->resBtnMultiRootBrowse->setVisible(isMulti);
+    ui->resLblMultiRoot->setVisible(isMulti);
+    ui->resEditMultiSavePath->setVisible(isMulti);
+    ui->resBtnMultiSavePathBrowse->setVisible(isMulti);
+    ui->resLblMultiSavePath->setVisible(isMulti);
 }
 
 void MainWindow::onResSpinRepeatCountChanged(int val) {
@@ -817,17 +1032,79 @@ void MainWindow::onResCheckInvertChanged(int state) {
 // ============================================================
 
 void MainWindow::onPcBtnImportCloudClicked() {
-    auto path = QFileDialog::getOpenFileName(this,
+    auto paths = QFileDialog::getOpenFileNames(this,
         QStringLiteral("导入点云"), {},
         "Point Cloud (*.ply *.pcd)");
-    if (path.isEmpty()) return;
-    try {
-        currentCloud_ = tp::PointCloudIO::load(path.toStdString());
-        vtkWidget_->updateCloud(currentCloud_);
-        appendLog(QStringLiteral("导入点云: ") + path +
-            QStringLiteral(" (%1 点)").arg(currentCloud_->size()));
-    } catch (const std::exception& e) {
-        appendLog(QString("导入失败: ") + e.what());
+    if (paths.isEmpty()) return;
+    for (const auto& path : paths) {
+        try {
+            auto cloud = tp::PointCloudIO::load(path.toStdString());
+            currentCloud_ = cloud;
+            vtkWidget_->updateCloud(currentCloud_);
+            QFileInfo fi(path);
+            auto* item = new QListWidgetItem(fi.fileName());
+            item->setData(Qt::UserRole, path);
+            item->setToolTip(path);
+            ui->pcCloudListWidget->addItem(item);
+            ui->pcCloudListWidget->setCurrentItem(item);
+            appendLog(QStringLiteral("导入点云: ") + fi.fileName() +
+                QStringLiteral(" (%1 点)").arg(cloud->size()));
+        } catch (const std::exception& e) {
+            appendLog(QStringLiteral("导入失败 [%1]: %2")
+                .arg(QFileInfo(path).fileName())
+                .arg(e.what()));
+        }
+    }
+}
+
+void MainWindow::onPcCloudListContextMenu(const QPoint& pos) {
+    auto* item = ui->pcCloudListWidget->itemAt(pos);
+    QMenu menu(this);
+    auto* actDelete = menu.addAction(QStringLiteral("删除"));
+    auto* actDeleteAll = menu.addAction(QStringLiteral("删除全部"));
+    menu.addSeparator();
+    auto* actReload = menu.addAction(QStringLiteral("重新加载"));
+    auto* actShowInVtk = menu.addAction(QStringLiteral("在3D视图中显示"));
+
+    // 仅当选中有效项时启用
+    actDelete->setEnabled(item != nullptr);
+    actReload->setEnabled(item != nullptr);
+    actShowInVtk->setEnabled(item != nullptr);
+
+    auto* chosen = menu.exec(ui->pcCloudListWidget->mapToGlobal(pos));
+    if (!chosen) return;
+
+    if (chosen == actDelete && item) {
+        delete ui->pcCloudListWidget->takeItem(
+            ui->pcCloudListWidget->row(item));
+        appendLog(QStringLiteral("已删除点云"));
+    } else if (chosen == actDeleteAll) {
+        ui->pcCloudListWidget->clear();
+        vtkWidget_->clearCloud();
+        currentCloud_.reset();
+        appendLog(QStringLiteral("已删除全部点云"));
+    } else if (chosen == actReload && item) {
+        QString path = item->data(Qt::UserRole).toString();
+        if (path.startsWith("__")) return;
+        try {
+            currentCloud_ = tp::PointCloudIO::load(path.toStdString());
+            vtkWidget_->updateCloud(currentCloud_);
+            appendLog(QStringLiteral("重新加载: ") + QFileInfo(path).fileName());
+        } catch (const std::exception& e) {
+            appendLog(QStringLiteral("重新加载失败: ") + e.what());
+        }
+    } else if (chosen == actShowInVtk && item) {
+        QString path = item->data(Qt::UserRole).toString();
+        if (path.startsWith("__")) {
+            if (currentCloud_) vtkWidget_->updateCloud(currentCloud_);
+            return;
+        }
+        try {
+            currentCloud_ = tp::PointCloudIO::load(path.toStdString());
+            vtkWidget_->updateCloud(currentCloud_);
+        } catch (const std::exception& e) {
+            appendLog(QStringLiteral("加载失败: ") + e.what());
+        }
     }
 }
 
@@ -1032,22 +1309,160 @@ void MainWindow::onPcSpinTransZChanged(double) {}
 void MainWindow::onBgaSpinCountChanged(int) {
 }
 void MainWindow::onBgaBtnStartClicked() {
-    appendLog(QStringLiteral("BGA 测量功能开发中"));
+    QString imgDir = ui->bgaEditImgFolder->text().trimmed();
+    QString cloudDir = ui->bgaEditCloudFolder->text().trimmed();
+    int count = ui->bgaSpinCount->value();
+
+    if (imgDir.isEmpty() || cloudDir.isEmpty()) {
+        appendBgaLog(QStringLiteral("请先设置图像文件夹和点云文件夹"));
+        return;
+    }
+
+    appendBgaLog(QStringLiteral("开始测量 (%1 次)...").arg(count));
+    ui->bgaBtnStart->setEnabled(false);
+
+    auto calib = dualCalib_;
+
+    std::thread([this, imgFolder = imgDir.toStdString(),
+                 cloudFolder = cloudDir.toStdString(), count, calib]() {
+        try {
+            tp::BGADetector detector;
+            std::vector<double> coplanarities;
+            cv::Mat lastBrightImg;
+            std::vector<cv::Vec3f> lastBalls2D;
+
+            for (int i = 1; i <= count; ++i) {
+                emit bgaLogMessage(QStringLiteral("处理第 %1/%2 次测量...")
+                    .arg(i).arg(count));
+
+                std::string imgPath = imgFolder + "/" + std::to_string(i) + ".bmp";
+                cv::Mat brightImg = imreadSafe(imgPath, cv::IMREAD_GRAYSCALE);
+                if (brightImg.empty()) {
+                    emit bgaLogMessage(QStringLiteral("无法加载图像 %1, 跳过")
+                        .arg(QString::fromStdString(imgPath)));
+                    continue;
+                }
+
+                std::string cloudPath;
+                namespace fs = std::filesystem;
+                if (fs::exists(fs::u8path(cloudFolder + "/" + std::to_string(i) + ".ply")))
+                    cloudPath = cloudFolder + "/" + std::to_string(i) + ".ply";
+                else if (fs::exists(fs::u8path(cloudFolder + "/" + std::to_string(i) + ".txt")))
+                    cloudPath = cloudFolder + "/" + std::to_string(i) + ".txt";
+                else
+                    cloudPath = cloudFolder + "/" + std::to_string(i) + ".pcd";
+
+                pcl::PointCloud<pcl::PointXYZ>::Ptr cloud;
+                try {
+                    cloud = tp::PointCloudIO::load(cloudPath);
+                } catch (const std::exception& ex) {
+                    emit bgaLogMessage(QStringLiteral("无法加载点云 %1: %2")
+                        .arg(QString::fromStdString(cloudPath))
+                        .arg(ex.what()));
+                    continue;
+                }
+                if (!cloud || cloud->empty()) {
+                    emit bgaLogMessage(QStringLiteral("点云 %1 为空, 跳过")
+                        .arg(QString::fromStdString(cloudPath)));
+                    continue;
+                }
+
+                cv::Mat mask = cv::Mat::ones(brightImg.size(), CV_8U) * 255;
+                auto balls2D = detector.detect2DBalls(brightImg, mask);
+                emit bgaLogMessage(QStringLiteral("检测到 %1 个焊球 (第 %2 次)")
+                    .arg(balls2D.size()).arg(i));
+
+                tp::CalibData singleCalib;
+                singleCalib.X = calib.X;
+                singleCalib.Y = calib.Y;
+                singleCalib.allK_i = calib.allK_i1;
+                singleCalib.isValid = true;
+                auto balls3D = detector.localize3DBalls(cloud, balls2D, singleCalib);
+                emit bgaLogMessage(QStringLiteral("3D定位 %1 个焊球").arg(balls3D.size()));
+
+                if (balls3D.size() < 3) {
+                    emit bgaLogMessage(QStringLiteral("第 %1 次3D焊球不足3个, 跳过共面度计算").arg(i));
+                    continue;
+                }
+                double cop = detector.calcCoplanarity(balls3D);
+                coplanarities.push_back(cop);
+                emit bgaLogMessage(QStringLiteral("第 %1 次共面度 = %2 mm")
+                    .arg(i).arg(cop, 0, 'f', 4));
+
+                lastBrightImg = brightImg.clone();
+                lastBalls2D = balls2D;
+            }
+
+            QString resultText;
+            for (int i = 0; i < static_cast<int>(coplanarities.size()); ++i) {
+                resultText += QStringLiteral("测量 %1: 共面度 = %2 mm\n")
+                    .arg(i + 1).arg(coplanarities[i], 0, 'f', 4);
+            }
+            if (!coplanarities.empty()) {
+                double sum = 0;
+                for (auto v : coplanarities) sum += v;
+                double avg = sum / coplanarities.size();
+                resultText += QStringLiteral("\n平均共面度 = %1 mm\n").arg(avg, 0, 'f', 4);
+            }
+
+            QImage ballShowImg;
+            if (!lastBrightImg.empty() && !lastBalls2D.empty()) {
+                cv::Mat colorShow;
+                cv::cvtColor(lastBrightImg, colorShow, cv::COLOR_GRAY2RGB);
+                for (const auto& b : lastBalls2D) {
+                    cv::circle(colorShow, cv::Point(static_cast<int>(b[0]),
+                        static_cast<int>(b[1])), static_cast<int>(b[2]),
+                        cv::Scalar(0, 255, 0), 2);
+                }
+                cv::Mat rgb = colorShow.clone();
+                ballShowImg = QImage(rgb.data, rgb.cols, rgb.rows,
+                    static_cast<int>(rgb.step), QImage::Format_RGB888).copy();
+            }
+
+            QMetaObject::invokeMethod(this, [this, resultText, coplanarities, ballShowImg]() {
+                bgaCoplanarities_ = coplanarities;
+                ui->bgaDataText->setPlainText(resultText);
+                if (!ballShowImg.isNull())
+                    ui->bgaBallLabel->setPixmap(QPixmap::fromImage(ballShowImg).scaled(
+                        ui->bgaBallLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                ui->bgaBtnStart->setEnabled(true);
+                appendBgaLog(QStringLiteral("测量完成"));
+            }, Qt::QueuedConnection);
+
+        } catch (const std::exception& e) {
+            QMetaObject::invokeMethod(this, [this, msg = QString(e.what())]() {
+                appendBgaLog(QStringLiteral("测量错误 - ") + msg);
+                ui->bgaBtnStart->setEnabled(true);
+            }, Qt::QueuedConnection);
+        }
+    }).detach();
 }
 void MainWindow::onBgaBtnPlotClicked() {
-    appendLog(QStringLiteral("BGA 绘图功能开发中"));
+    appendBgaLog(QStringLiteral("绘图功能开发中"));
 }
 void MainWindow::onBgaBtnBallShowClicked() {
-    appendLog(QStringLiteral("BGA 焊球显示功能开发中"));
+    appendBgaLog(QStringLiteral("焊球显示功能开发中"));
 }
 void MainWindow::onBgaBtnImportClicked() {
     auto path = QFileDialog::getOpenFileName(this,
         QStringLiteral("导入 BGA 数据"), {}, "CSV (*.csv);;TXT (*.txt)");
     if (path.isEmpty()) return;
-    appendLog(QStringLiteral("BGA 数据导入: ") + path);
+    appendBgaLog(QStringLiteral("数据导入: ") + path);
 }
 void MainWindow::onBgaBtnSaveClicked() {
-    appendLog(QStringLiteral("BGA 导出功能开发中"));
+    appendBgaLog(QStringLiteral("导出功能开发中"));
+}
+
+void MainWindow::onBgaBtnImgFolderBrowseClicked() {
+    auto dir = QFileDialog::getExistingDirectory(this,
+        QStringLiteral("选择BGA图像文件夹"));
+    if (!dir.isEmpty()) ui->bgaEditImgFolder->setText(dir);
+}
+
+void MainWindow::onBgaBtnCloudFolderBrowseClicked() {
+    auto dir = QFileDialog::getExistingDirectory(this,
+        QStringLiteral("选择BGA点云文件夹"));
+    if (!dir.isEmpty()) ui->bgaEditCloudFolder->setText(dir);
 }
 
 // ============================================================
@@ -1057,20 +1472,104 @@ void MainWindow::onBgaBtnSaveClicked() {
 void MainWindow::onQfpSpinCountChanged(int) {
 }
 void MainWindow::onQfpBtnStartClicked() {
-    appendLog(QStringLiteral("QFP 测量功能开发中"));
+    QString imgDir = ui->qfpEditImgFolder->text().trimmed();
+    QString cloudDir = ui->qfpEditCloudFolder->text().trimmed();
+    int count = ui->qfpSpinCount->value();
+
+    if (imgDir.isEmpty() || cloudDir.isEmpty()) {
+        appendQfpLog(QStringLiteral("请先设置图像文件夹和点云文件夹"));
+        return;
+    }
+
+    appendQfpLog(QStringLiteral("开始测量 (%1 次)...").arg(count));
+    ui->qfpBtnStart->setEnabled(false);
+
+    std::thread([this, imgFolder = imgDir.toStdString(),
+                 cloudFolder = cloudDir.toStdString(), count]() {
+        try {
+            tp::BGAMeasurePipeline pipeline;
+            QString resultText;
+            cv::Mat lastSegImg;
+
+            for (int i = 1; i <= count; ++i) {
+                emit qfpLogMessage(QStringLiteral("处理第 %1/%2 次...")
+                    .arg(i).arg(count));
+
+                std::string imgPath = imgFolder + "/" + std::to_string(i) + ".bmp";
+                cv::Mat gray = imreadSafe(imgPath, cv::IMREAD_GRAYSCALE);
+                if (gray.empty()) {
+                    emit qfpLogMessage(QStringLiteral("无法加载 %1, 跳过")
+                        .arg(QString::fromStdString(imgPath)));
+                    continue;
+                }
+
+                cv::Mat chipMask;
+                auto chipInfo = pipeline.localizeChip(gray, chipMask);
+                auto bodyRect = pipeline.refineBodyBoundary(gray, chipMask);
+                auto searchRegions = pipeline.defineSearchRegions(chipInfo, gray.size());
+                auto pins = pipeline.segmentPins(gray, searchRegions, bodyRect);
+
+                emit qfpLogMessage(QStringLiteral("第 %1 次分割完成, 检测到 %2 个引脚")
+                    .arg(i).arg(pins.size()));
+
+                resultText += QStringLiteral("测量 %1: 引脚数 = %2\n")
+                    .arg(i).arg(pins.size());
+
+                cv::Mat segShow;
+                cv::cvtColor(gray, segShow, cv::COLOR_GRAY2RGB);
+                for (const auto& pin : pins) {
+                    cv::rectangle(segShow, pin.bbox, cv::Scalar(0, 255, 0), 1);
+                }
+                lastSegImg = segShow.clone();
+            }
+
+            QImage segQImg;
+            if (!lastSegImg.empty()) {
+                segQImg = QImage(lastSegImg.data, lastSegImg.cols, lastSegImg.rows,
+                    static_cast<int>(lastSegImg.step), QImage::Format_RGB888).copy();
+            }
+
+            QMetaObject::invokeMethod(this, [this, resultText, segQImg]() {
+                ui->qfpDataText->setPlainText(resultText);
+                if (!segQImg.isNull())
+                    ui->qfpSegLabel->setPixmap(QPixmap::fromImage(segQImg).scaled(
+                        ui->qfpSegLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                ui->qfpBtnStart->setEnabled(true);
+                appendQfpLog(QStringLiteral("测量完成"));
+            }, Qt::QueuedConnection);
+
+        } catch (const std::exception& e) {
+            QMetaObject::invokeMethod(this, [this, msg = QString(e.what())]() {
+                appendQfpLog(QStringLiteral("测量错误 - ") + msg);
+                ui->qfpBtnStart->setEnabled(true);
+            }, Qt::QueuedConnection);
+        }
+    }).detach();
 }
 void MainWindow::onQfpBtnPlotClicked() {
-    appendLog(QStringLiteral("QFP 绘图功能开发中"));
+    appendQfpLog(QStringLiteral("绘图功能开发中"));
 }
 void MainWindow::onQfpBtnPinShowClicked() {
-    appendLog(QStringLiteral("QFP 引脚显示功能开发中"));
+    appendQfpLog(QStringLiteral("引脚显示功能开发中"));
 }
 void MainWindow::onQfpBtnImportClicked() {
     auto path = QFileDialog::getOpenFileName(this,
         QStringLiteral("导入 QFP 数据"), {}, "CSV (*.csv);;TXT (*.txt)");
     if (path.isEmpty()) return;
-    appendLog(QStringLiteral("QFP 数据导入: ") + path);
+    appendQfpLog(QStringLiteral("数据导入: ") + path);
 }
 void MainWindow::onQfpBtnSaveClicked() {
-    appendLog(QStringLiteral("QFP 导出功能开发中"));
+    appendQfpLog(QStringLiteral("导出功能开发中"));
+}
+
+void MainWindow::onQfpBtnImgFolderBrowseClicked() {
+    auto dir = QFileDialog::getExistingDirectory(this,
+        QStringLiteral("选择QFP图像文件夹"));
+    if (!dir.isEmpty()) ui->qfpEditImgFolder->setText(dir);
+}
+
+void MainWindow::onQfpBtnCloudFolderBrowseClicked() {
+    auto dir = QFileDialog::getExistingDirectory(this,
+        QStringLiteral("选择QFP点云文件夹"));
+    if (!dir.isEmpty()) ui->qfpEditCloudFolder->setText(dir);
 }

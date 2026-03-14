@@ -191,24 +191,60 @@ std::vector<Eigen::Vector3d> BGADetector::localize3DBalls(
         throw tp::MeasureException("localize3DBalls: no 2D balls");
     }
 
-    constexpr int MIN_BALL_POINTS = 50;
+    constexpr int MIN_BALL_POINTS = 10;
     constexpr int MAX_SURFACE_ITER = 100;
     constexpr double OUTLIER_SIGMA = 2.5;
+
+    // 将2D像素坐标球心转换为世界坐标，使用标定X/Y矩阵
+    struct Ball3DSearch {
+        double wx, wy, wRadius;
+    };
+    std::vector<Ball3DSearch> searchBalls;
+    searchBalls.reserve(balls2D.size());
+
+    bool hasCalibXY = !calib.X.empty() && !calib.Y.empty();
+
+    for (const auto& ball : balls2D) {
+        int cx = static_cast<int>(std::round(ball[0]));
+        int cy = static_cast<int>(std::round(ball[1]));
+        float radius = ball[2];
+        Ball3DSearch bs{};
+
+        if (hasCalibXY
+            && cy >= 0 && cy < calib.X.rows
+            && cx >= 0 && cx < calib.X.cols) {
+            // 使用标定矩阵将像素中心映射到世界坐标
+            bs.wx = calib.X.at<double>(cy, cx);
+            bs.wy = calib.Y.at<double>(cy, cx);
+            // 估算世界坐标半径：取球边缘一点计算距离
+            int ex = std::min(cx + static_cast<int>(radius), calib.X.cols - 1);
+            double edgeX = calib.X.at<double>(cy, ex);
+            double edgeY = calib.Y.at<double>(cy, ex);
+            bs.wRadius = std::sqrt((edgeX - bs.wx) * (edgeX - bs.wx)
+                                 + (edgeY - bs.wy) * (edgeY - bs.wy));
+            if (bs.wRadius < 0.01) bs.wRadius = 2.0; // fallback 2mm
+        } else {
+            // 无标定数据，直接使用像素坐标（原始行为，可能不精确）
+            bs.wx = ball[0];
+            bs.wy = ball[1];
+            bs.wRadius = radius;
+        }
+        searchBalls.push_back(bs);
+    }
 
     std::vector<Eigen::Vector3d> vertices;
     vertices.reserve(balls2D.size());
 
-    for (const auto& ball : balls2D) {
-        float cx = ball[0], cy = ball[1], radius = ball[2];
+    for (const auto& bs : searchBalls) {
+        double searchR = bs.wRadius * 2.0;
 
         // 收集焊球区域内的3D点
         std::vector<Eigen::Vector3d> ballPts;
         for (const auto& pt : cloud->points) {
-            if (!std::isfinite(pt.x)) continue;
-            // 使用标定映射或直接像素对应
-            double dx = pt.x - cx;
-            double dy = pt.y - cy;
-            if (dx * dx + dy * dy <= radius * radius * 4.0) {
+            if (!std::isfinite(pt.x) || !std::isfinite(pt.z)) continue;
+            double dx = pt.x - bs.wx;
+            double dy = pt.y - bs.wy;
+            if (dx * dx + dy * dy <= searchR * searchR) {
                 ballPts.emplace_back(pt.x, pt.y, pt.z);
             }
         }

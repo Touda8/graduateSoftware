@@ -1,8 +1,8 @@
 function [ballResults, figHandles] = allDealTwoplane(bga_image, X, Y, Z, output_dir, config)
-% allDealTwoplane - 焊球检测与测量函数（简化版：平面到平面距离）
+% allDealTwoplane - 焊球检测与测量函数（PCA平面法）
 %
 % 输入：
-%   bga_image_path - BGA图像路径
+%   bga_image - BGA图像矩阵（灰度或RGB）
 %   X, Y, Z - 3D坐标矩阵
 %   output_dir - 输出图片保存目录
 %   config - 可选配置参数结构体
@@ -50,11 +50,13 @@ end
 fprintf('\n========== 焊球检测与测量开始 ==========\n');
 
 %% ========== 第一部分：焊球检测与编号 ==========
-fprintf('【第一部分】焊球检测、圆拟合与编号...\n');
+fprintf('【第一部分】焊球检测、质心提取与编号...\n');
 
 %% 1.1 读取2D图像
-fprintf('  读取图像: %s\n', bga_image_path);
-I_original = bga_imag;
+I_original = bga_image;
+if size(I_original, 3) == 3
+    I_original = rgb2gray(I_original);
+end
 %% 1.2 芯片区域粗定位
 level_chip = graythresh(I_original);
 BW_chip = imbinarize(I_original, level_chip);
@@ -141,51 +143,29 @@ end
 
 fprintf('  检测到 %d 个有效焊球\n', length(valid_indices));
 
-%% 1.9 圆拟合
+%% 1.9 基于连通域质心构建焊球圆心（不做圆拟合）
 num_balls = length(valid_indices);
 ballCircles = struct('xc', {}, 'yc', {}, 'r', {}, 'ballIdx', {});
-edges = edge(double(BW_balls), 'Canny');
 
 for idx = 1:num_balls
     ball_idx_current = valid_indices(idx);
-    mask_current = false(size(BW_balls));
-    mask_current(CC_balls.PixelIdxList{ball_idx_current}) = true;
-    mask_dilated = imdilate(mask_current, strel('disk', 5));
-    edge_mask_current = mask_dilated & edges;
-    [y_edge, x_edge] = find(edge_mask_current);
-    
-    if length(x_edge) < 10
-        continue;
-    end
-    
-    points = [x_edge, y_edge];
-    xc_init = mean(x_edge);
-    yc_init = mean(y_edge);
-    r_init = mean(sqrt((x_edge - xc_init).^2 + (y_edge - yc_init).^2));
-    
-    for iter = 1:CONFIG.circle_fit_iterations
-        residuals = sqrt((points(:,1) - xc_init).^2 + (points(:,2) - yc_init).^2) - r_init;
-        sigma = std(residuals);
-        threshold = CONFIG.circle_fit_beta * sigma;
-        inliers = abs(residuals) < threshold;
-        
-        if sum(inliers) < 10
-            break;
-        end
-        
-        points_inliers = points(inliers, :);
-        xc_init = mean(points_inliers(:,1));
-        yc_init = mean(points_inliers(:,2));
-        r_init = mean(sqrt((points_inliers(:,1) - xc_init).^2 + (points_inliers(:,2) - yc_init).^2));
-    end
-    
-    ballCircles(idx).xc = xc_init;
-    ballCircles(idx).yc = yc_init;
-    ballCircles(idx).r = r_init;
+
+    % 使用连通域质心作为圆心
+    centroid_current = stats_balls(ball_idx_current).Centroid;
+    xc_current = centroid_current(1);
+    yc_current = centroid_current(2);
+
+    % 用等效半径替代拟合半径（保持后续可视化兼容）
+    area_current = stats_balls(ball_idx_current).Area;
+    r_equiv = sqrt(area_current / pi);
+
+    ballCircles(idx).xc = xc_current;
+    ballCircles(idx).yc = yc_current;
+    ballCircles(idx).r = r_equiv;
     ballCircles(idx).ballIdx = ball_idx_current;
 end
 
-fprintf('  完成 %d 个焊球的圆拟合\n', length(ballCircles));
+fprintf('  完成 %d 个焊球的质心提取（圆心=连通域质心）\n', length(ballCircles));
 
 %% 1.10 芯片旋转矫正与焊球排序
 BW_chip_mask = (mask_chip == 1);
@@ -314,8 +294,8 @@ hanqiuMask_eroded = imerode(hanqiuMask, se_erode);
 se_dilate = strel('disk', 5);
 hanqiuMask_dilated = imdilate(hanqiuMask, se_dilate);
 
-%% 2.2 基板平面拟合（简化为平面拟合）
-fprintf('  基板平面拟合（最小二乘法）...\n');
+%% 2.2 基板平面拟合（PCA分析法）
+fprintf('  基板平面拟合（PCA分析法）...\n');
 validDataMask = (Z ~= 0) & ~isnan(Z);
 substrateMask = I_masked & ~hanqiuMask_dilated & validDataMask;
 idx_sub = find(substrateMask);
@@ -323,31 +303,40 @@ idx_sub = find(substrateMask);
 pts_sub_init = [X(idx_sub), Y(idx_sub), Z(idx_sub)];
 pts_sub_init = pts_sub_init(~any(isnan(pts_sub_init),2), :);
 
-% 最小二乘法拟合平面: Z = a*X + b*Y + c
-% 构建方程 [X, Y, 1] * [a; b; c] = Z
-X_sub = pts_sub_init(:,1);
-Y_sub = pts_sub_init(:,2);
-Z_sub = pts_sub_init(:,3);
-M_substrate = [X_sub, Y_sub, ones(size(X_sub))];
-params_substrate = M_substrate \ Z_sub;  % [a; b; c]
+if size(pts_sub_init, 1) < 30
+    error('基板有效点云过少，无法进行PCA平面拟合');
+end
 
-a_substrate = params_substrate(1);
-b_substrate = params_substrate(2);
-c_substrate = params_substrate(3);
+% PCA平面：最小主成分方向作为法向量
+centroid_sub = mean(pts_sub_init, 1);
+[coeff_sub, ~, ~] = pca(pts_sub_init);
+n_sub = coeff_sub(:, 3);
+n_sub = n_sub / norm(n_sub);
 
-fprintf('  基板平面方程: Z = %.6f*X + %.6f*Y + %.6f\n', ...
-        a_substrate, b_substrate, c_substrate);
+% 统一方向：优先令z分量为负
+if n_sub(3) > 0
+    n_sub = -n_sub;
+end
+
+% 平面方程: n_sub' * [x y z]' + d_sub = 0
+d_sub = -dot(n_sub, centroid_sub');
+
+fprintf('  基板平面法向量: [%.6f, %.6f, %.6f]\n', n_sub(1), n_sub(2), n_sub(3));
+fprintf('  基板平面质心: [%.6f, %.6f, %.6f]\n', centroid_sub(1), centroid_sub(2), centroid_sub(3));
 fprintf('  基板平面拟合完成\n');
 
 %% 2.3 焊球连通域分析
 CC = bwconncomp(hanqiuMask_eroded);
 stats = regionprops(CC, 'Area', 'PixelIdxList');
 
-%% 2.4 对所有焊球进行高度测量（简化方法：平面到平面距离）
-fprintf('  对所有焊球进行高度测量（平面拟合法）...\n');
+%% 2.4 对所有焊球进行高度测量（单焊球PCA平面到基板PCA平面）
+fprintf('  对所有焊球进行高度测量（单焊球PCA平面测距）...\n');
 num_balls_to_measure = length(ballCircles);
 vertices_all = zeros(num_balls_to_measure, 3);
 heights_all = zeros(num_balls_to_measure, 1);
+ball_normals_all = nan(num_balls_to_measure, 3);
+centroids_2d_all = nan(num_balls_to_measure, 2);
+centroids_3d_all = nan(num_balls_to_measure, 3);
 
 % 建立映射
 ball_to_stats_map = zeros(num_balls_to_measure, 1);
@@ -393,31 +382,29 @@ for i = 1:num_balls_to_measure
             continue;
         end
         
-        % 焊球平面拟合: Z = a*X + b*Y + c
-        X_ball = pts_ball(:,1);
-        Y_ball = pts_ball(:,2);
-        Z_ball = pts_ball(:,3);
-        M_ball = [X_ball, Y_ball, ones(size(X_ball))];
-        params_ball = M_ball \ Z_ball;  % [a; b; c]
-        
-        a_ball = params_ball(1);
-        b_ball = params_ball(2);
-        c_ball = params_ball(3);
-        
-        % 计算焊球平面的中心点
-        x_center = mean(X_ball);
-        y_center = mean(Y_ball);
-        z_center_ball = a_ball * x_center + b_ball * y_center + c_ball;
-        
-        % 计算该中心点在基板平面上的对应高度
-        z_center_substrate = a_substrate * x_center + b_substrate * y_center + c_substrate;
-        
-        % 平面间距离 = 焊球平面中心 - 基板平面中心
-        height = z_center_ball - z_center_substrate;
-        
+        % 单焊球PCA平面
+        centroid_ball = mean(pts_ball, 1);
+        [coeff_ball, ~, ~] = pca(pts_ball);
+        n_ball = coeff_ball(:, 3);
+        n_ball = n_ball / norm(n_ball);
+        if dot(n_ball, n_sub) < 0
+            n_ball = -n_ball;
+        end
+
+        % hanqiuMask_eroded 的白色连通域质心（2D）
+        [rows_i, cols_i] = ind2sub(size(hanqiuMask_eroded), ball_pixels_i);
+        centroid_2d = [mean(cols_i), mean(rows_i)];
+
+        % 焊球质心到基板平面的距离（单位与XYZ一致，通常mm）
+        signed_dist = dot(n_sub, centroid_ball') + d_sub;
+        height = abs(signed_dist);
+
         % 保存结果
-        vertices_all(i, :) = [x_center, y_center, z_center_ball];
+        vertices_all(i, :) = centroid_ball;
         heights_all(i) = height;
+        ball_normals_all(i, :) = n_ball';
+        centroids_2d_all(i, :) = centroid_2d;
+        centroids_3d_all(i, :) = centroid_ball;
         success_count = success_count + 1;
         
     catch ME
@@ -526,12 +513,14 @@ if nargin >= 5 && ~isempty(output_dir)
             caxis([h_min, h_max]);
         end
         
-        % 绘制基板（平面）
+        % 绘制基板（PCA平面）
         x_v_range = linspace(min(vertices_valid(:,1)), max(vertices_valid(:,1)), 30);
         y_v_range = linspace(min(vertices_valid(:,2)), max(vertices_valid(:,2)), 30);
         [XX_v, YY_v] = meshgrid(x_v_range, y_v_range);
-        ZZ_v = a_substrate * XX_v + b_substrate * YY_v + c_substrate;
-        surf(XX_v, YY_v, ZZ_v, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'FaceColor', [0.8 0.8 0.8]);
+        if abs(n_sub(3)) > 1e-10
+            ZZ_v = -(n_sub(1)*XX_v + n_sub(2)*YY_v + d_sub) / n_sub(3);
+            surf(XX_v, YY_v, ZZ_v, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'FaceColor', [0.8 0.8 0.8]);
+        end
         
         xlabel('X/mm'); ylabel('Y/mm'); zlabel('Z/mm');
         title(sprintf('焊球3D分布 (N=%d)', sum(valid_mask)), 'FontSize', 13, 'FontWeight', 'bold');
@@ -540,6 +529,84 @@ if nargin >= 5 && ~isempty(output_dir)
         
         saveas(fig2, fullfile(output_dir, '焊球3D分布.png'));
         figHandles = [figHandles, fig2];
+
+        % 图3：hanqiuMask_eroded 质心标注图
+        fig3 = figure('Position', [100, 100, 1400, 900], 'Color', 'w', 'Visible', 'off');
+        imshow(hanqiuMask_eroded);
+        hold on;
+        title('hanqiuMask\_eroded 质心标注', 'FontSize', 13, 'FontWeight', 'bold');
+        valid_ids = find(valid_mask);
+        for ii = 1:length(valid_ids)
+            k = valid_ids(ii);
+            cx = centroids_2d_all(k, 1);
+            cy = centroids_2d_all(k, 2);
+            if ~isnan(cx) && ~isnan(cy)
+                plot(cx, cy, 'r+', 'MarkerSize', 10, 'LineWidth', 1.8);
+                text(cx+3, cy-3, sprintf('#%d', ballResults(k).order), ...
+                    'Color', 'y', 'FontSize', 8, 'FontWeight', 'bold', ...
+                    'BackgroundColor', [0 0 0 0.5]);
+            end
+        end
+        hold off;
+        saveas(fig3, fullfile(output_dir, 'hanqiuMask_eroded_质心标注.png'));
+        figHandles = [figHandles, fig3];
+
+        % 图4：法向夹角统计图
+        fig4 = figure('Position', [100, 100, 1200, 500], 'Color', 'w', 'Visible', 'off');
+        valid_normals = ball_normals_all(valid_mask, :);
+        cos_t = valid_normals * n_sub;
+        cos_t = max(min(cos_t, 1), -1);
+        ang_deg = acosd(cos_t);
+
+        subplot(1, 2, 1);
+        histogram(ang_deg, 20);
+        xlabel('夹角 / 度'); ylabel('数量');
+        title('焊球平面法向与基板法向夹角分布');
+        grid on;
+
+        subplot(1, 2, 2);
+        scatter(1:length(ang_deg), ang_deg, 40, heights_valid, 'filled');
+        colorbar;
+        xlabel('有效焊球索引'); ylabel('法向夹角 / 度');
+        title('夹角-高度关联图');
+        grid on;
+
+        saveas(fig4, fullfile(output_dir, '法向夹角统计.png'));
+        figHandles = [figHandles, fig4];
+
+        % 图5：每个焊球质心局部截图
+        centroid_dir = fullfile(output_dir, 'centroid_crops');
+        if ~exist(centroid_dir, 'dir')
+            mkdir(centroid_dir);
+        end
+
+        crop_half = 30;
+        [h_img, w_img] = size(I_original);
+        for ii = 1:length(valid_ids)
+            k = valid_ids(ii);
+            cx = round(centroids_2d_all(k, 1));
+            cy = round(centroids_2d_all(k, 2));
+            if isnan(cx) || isnan(cy)
+                continue;
+            end
+
+            x1 = max(1, cx - crop_half);
+            x2 = min(w_img, cx + crop_half);
+            y1 = max(1, cy - crop_half);
+            y2 = min(h_img, cy + crop_half);
+            crop_img = I_original(y1:y2, x1:x2);
+
+            fig_tmp = figure('Visible', 'off', 'Color', 'w');
+            imshow(crop_img);
+            hold on;
+            plot(cx - x1 + 1, cy - y1 + 1, 'r+', 'MarkerSize', 10, 'LineWidth', 1.8);
+            text(5, 12, sprintf('order=%d, h=%.4fmm', ballResults(k).order, heights_all(k)), ...
+                'Color', 'y', 'FontSize', 8, 'FontWeight', 'bold', 'BackgroundColor', [0 0 0 0.5]);
+            hold off;
+
+            saveas(fig_tmp, fullfile(centroid_dir, sprintf('ball_%03d_order_%03d.png', k, ballResults(k).order)));
+            close(fig_tmp);
+        end
     end
     
     fprintf('  ✓ 图片已保存至: %s\n', output_dir);
