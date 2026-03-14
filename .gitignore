@@ -1,0 +1,52 @@
+# Visual Studio build artifacts
+.vs/
+x64/
+build/
+Debug/
+Release/
+log/
+Project2/
+# Object and exe files
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.lib
+*.exp
+*.idb
+*.ipch
+*.VC.db
+*.opendb
+ipch/
+*.dll
+*.mat
+
+
+# VS Code and user files
+*.user
+*.aps
+*.ncb
+*.suo
+
+# Qt generated files
+ui_*.h
+moc_*.cpp
+qrc_*.cpp
+
+# Compiler output
+*.tlog
+*.log
+
+# Runtime data and logs
+data/
+logs/
+config/params.json
+
+# Build output artifacts
+.dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~

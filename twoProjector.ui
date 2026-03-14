@@ -1,0 +1,1389 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>twoProjectorClass</class>
+ <widget class="QMainWindow" name="twoProjectorClass">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>1644</width><height>1000</height></rect>
+  </property>
+  <property name="windowTitle">
+   <string>远心单目双光栅三维重建测量系统</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">
+QGroupBox {
+    font-weight: 400;
+    font-size: 12px;
+    border: 1px solid #444444;
+    border-radius: 8px;
+    margin-top: 1ex;
+    padding-top: 5px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 8px 0 8px;
+    color: #222222;
+    font-weight: 600;
+}
+   </string>
+  </property>
+  <widget class="QWidget" name="centralWidget">
+   <layout class="QVBoxLayout" name="mainLayout">
+    <item>
+     <widget class="QTabWidget" name="tabWidget">
+      <property name="currentIndex">
+       <number>0</number>
+      </property>
+
+      <!-- ==================== Tab 1: 图像采集 ==================== -->
+      <widget class="QWidget" name="capWidget">
+       <attribute name="title">
+        <string>图像采集</string>
+       </attribute>
+       <layout class="QHBoxLayout" name="capMainLayout" stretch="2,6">
+        <item>
+         <layout class="QVBoxLayout" name="capLeftLayout">
+          <!-- 连接状态 -->
+          <item>
+           <widget class="QGroupBox" name="capConnGroupBox">
+            <property name="title"><string>连接状态</string></property>
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <layout class="QVBoxLayout" name="capConnLayout">
+             <item>
+              <widget class="QTreeWidget" name="capTreeWidget">
+               <property name="maximumSize"><size><width>16777215</width><height>140</height></size></property>
+               <column><property name="text"><string>设备名称</string></property></column>
+               <column><property name="text"><string>设备状态</string></property></column>
+               <item>
+                <property name="text"><string>工业相机</string></property>
+                <item>
+                 <property name="text"><string>MER2-503-36U3M</string></property>
+                 <property name="text"><string>已连接</string></property>
+                </item>
+               </item>
+               <item>
+                <property name="text"><string>工业投影仪</string></property>
+                <item>
+                 <property name="text"><string>投影仪1 (OPR305185)</string></property>
+                 <property name="text"><string>已连接</string></property>
+                </item>
+                <item>
+                 <property name="text"><string>投影仪2 (OPR305185)</string></property>
+                 <property name="text"><string>已连接</string></property>
+                </item>
+               </item>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 投影仪连接 -->
+          <item>
+           <widget class="QGroupBox" name="capProjConnGroupBox">
+            <property name="title"><string>投影仪连接</string></property>
+            <layout class="QVBoxLayout" name="capProjConnLayout">
+             <item>
+              <widget class="QPushButton" name="capBtnProjScan">
+               <property name="text"><string>扫描设备</string></property>
+               <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+              </widget>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="capPro1Row">
+               <item>
+                <widget class="QLabel" name="capLblPro1Status">
+                 <property name="text"><string>Pro1: 未连接</string></property>
+                 <property name="styleSheet"><string notr="true">color: red;</string></property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="capBtnPro1Connect">
+                 <property name="text"><string>连接</string></property>
+                 <property name="maximumSize"><size><width>60</width><height>16777215</height></size></property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="capBtnPro1Disconnect">
+                 <property name="text"><string>断开</string></property>
+                 <property name="maximumSize"><size><width>60</width><height>16777215</height></size></property>
+                 <property name="enabled"><bool>false</bool></property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="capPro2Row">
+               <item>
+                <widget class="QLabel" name="capLblPro2Status">
+                 <property name="text"><string>Pro2: 未连接</string></property>
+                 <property name="styleSheet"><string notr="true">color: red;</string></property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="capBtnPro2Connect">
+                 <property name="text"><string>连接</string></property>
+                 <property name="maximumSize"><size><width>60</width><height>16777215</height></size></property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="capBtnPro2Disconnect">
+                 <property name="text"><string>断开</string></property>
+                 <property name="maximumSize"><size><width>60</width><height>16777215</height></size></property>
+                 <property name="enabled"><bool>false</bool></property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="capAllConnRow">
+               <item>
+                <widget class="QPushButton" name="capBtnAllConnect">
+                 <property name="text"><string>全部连接</string></property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="capBtnAllDisconnect">
+                 <property name="text"><string>全部断开</string></property>
+                 <property name="enabled"><bool>false</bool></property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 参数设置 -->
+          <item>
+           <widget class="QGroupBox" name="capParamGroupBox">
+            <property name="title"><string>参数设置</string></property>
+            <layout class="QGridLayout" name="capParamGrid">
+             <item row="0" column="0"><widget class="QLabel" name="capLblTrigMode"><property name="text"><string>触发模式:</string></property></widget></item>
+             <item row="0" column="1">
+              <widget class="QComboBox" name="capComboTrigMode">
+               <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+               <item><property name="text"><string>On</string></property></item>
+               <item><property name="text"><string>Off</string></property></item>
+              </widget>
+             </item>
+             <item row="1" column="0"><widget class="QLabel" name="capLblTrigSrc"><property name="text"><string>触发源:</string></property></widget></item>
+             <item row="1" column="1">
+              <widget class="QComboBox" name="capComboTrigSrc">
+               <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+               <item><property name="text"><string>Line0</string></property></item>
+               <item><property name="text"><string>Software</string></property></item>
+               <item><property name="text"><string>Line1</string></property></item>
+              </widget>
+             </item>
+             <item row="2" column="0"><widget class="QLabel" name="capLblExposure"><property name="text"><string>曝光时间(μs):</string></property></widget></item>
+             <item row="2" column="1"><widget class="QLineEdit" name="capEditExposure"><property name="text"><string>30000</string></property></widget></item>
+             <item row="3" column="0"><widget class="QLabel" name="capLblFramerate"><property name="text"><string>采集帧率:</string></property></widget></item>
+             <item row="3" column="1"><widget class="QLineEdit" name="capEditFramerate"><property name="text"><string>20.00(Hz)</string></property></widget></item>
+             <item row="4" column="0"><widget class="QLabel" name="capLblSN"><property name="text"><string>相机SN码:</string></property></widget></item>
+             <item row="4" column="1"><widget class="QLineEdit" name="capEditSN"><property name="text"><string>MER2-503-36U3M</string></property></widget></item>
+             <item row="5" column="0" colspan="2">
+              <widget class="QPushButton" name="capBtnSoftTrigger">
+               <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+               <property name="text"><string>单帧采集</string></property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 投影测试 -->
+          <item>
+           <widget class="QGroupBox" name="capProjTestGroupBox">
+            <property name="title"><string>投影测试</string></property>
+            <layout class="QGridLayout" name="capProjTestGrid">
+             <item row="0" column="0">
+              <widget class="QLabel" name="capLblTestProjSel">
+               <property name="text"><string>目标投影仪:</string></property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <layout class="QHBoxLayout" name="capTestProjSelLayout">
+               <item>
+                <widget class="QCheckBox" name="capCheckPro1Test">
+                 <property name="text"><string>Pro1</string></property>
+                 <property name="checked"><bool>true</bool></property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QCheckBox" name="capCheckPro2Test">
+                 <property name="text"><string>Pro2</string></property>
+                 <property name="checked"><bool>false</bool></property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="capLblTestPattern">
+               <property name="text"><string>测试图案:</string></property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="QComboBox" name="capComboProjPattern">
+               <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+               <item><property name="text"><string>实色-白</string></property></item>
+               <item><property name="text"><string>实色-黑</string></property></item>
+               <item><property name="text"><string>彩色条</string></property></item>
+               <item><property name="text"><string>水平线</string></property></item>
+               <item><property name="text"><string>垂直线</string></property></item>
+               <item><property name="text"><string>格栅</string></property></item>
+               <item><property name="text"><string>棋盘格</string></property></item>
+              </widget>
+             </item>
+             <item row="2" column="0">
+              <widget class="QPushButton" name="capBtnProjShowTest">
+               <property name="text"><string>显示测试图案</string></property>
+              </widget>
+             </item>
+             <item row="2" column="1">
+              <widget class="QPushButton" name="capBtnProjStopTest">
+               <property name="text"><string>停止测试图案</string></property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 文件设置 -->
+          <item>
+           <widget class="QGroupBox" name="capFileGroupBox">
+            <property name="title"><string>文件设置</string></property>
+            <layout class="QVBoxLayout" name="capFileLayout">
+             <item>
+              <layout class="QHBoxLayout" name="capFileRow">
+               <item><widget class="QLabel" name="capLblFolder"><property name="text"><string>采集图像文件夹:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="capEditFolder"><property name="text"><string>D:/Scan/MonocularDual/260226/bga</string></property></widget></item>
+               <item>
+                <widget class="QPushButton" name="capBtnBrowse">
+                 <property name="maximumSize"><size><width>50</width><height>16777215</height></size></property>
+                 <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+                 <property name="text"><string>浏览</string></property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 扫描采集 -->
+          <item>
+           <widget class="QGroupBox" name="capScanGroupBox">
+            <property name="title"><string>扫描采集</string></property>
+            <layout class="QVBoxLayout" name="capScanLayout">
+             <item>
+              <layout class="QHBoxLayout" name="capStepRow">
+               <item><widget class="QLabel" name="capLblStep"><property name="text"><string>相移步数:</string></property></widget></item>
+               <item>
+                <widget class="QComboBox" name="capComboPhaseStep">
+                 <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+                 <item><property name="text"><string>四步</string></property></item>
+                 <item><property name="text"><string>八步</string></property></item>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="capTrigRow">
+               <item>
+                <widget class="QPushButton" name="capBtnPro1Trig">
+                 <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+                 <property name="text"><string>Pro1投射</string></property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="capBtnPro2Trig">
+                 <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+                 <property name="text"><string>Pro2投射</string></property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <widget class="QPushButton" name="capBtnContinuous">
+               <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+               <property name="text"><string>连续采集</string></property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 采集日志 -->
+          <item>
+           <widget class="QGroupBox" name="capLogGroupBox">
+            <property name="title"><string>采集日志</string></property>
+            <layout class="QVBoxLayout" name="capLogLayout">
+             <item>
+              <widget class="QTextEdit" name="capLogText">
+               <property name="readOnly"><bool>false</bool></property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <!-- Right: 采集界面 -->
+        <item>
+         <layout class="QVBoxLayout" name="capRightLayout" stretch="1,50">
+          <item>
+           <widget class="QLabel" name="capTitleLabel">
+            <property name="text"><string>采集界面</string></property>
+            <property name="alignment"><set>Qt::AlignCenter</set></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="capShowLabel">
+            <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255); border: 1px solid #ccc;</string></property>
+            <property name="text"><string>条纹图像显示区</string></property>
+            <property name="alignment"><set>Qt::AlignCenter</set></property>
+            <property name="scaledContents"><bool>true</bool></property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+
+      <!-- ==================== Tab 2: 系统重建 ==================== -->
+      <widget class="QWidget" name="resWidget">
+       <attribute name="title">
+        <string>系统重建</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="resMainWrapLayout">
+        <!-- 收起/展开参数面板 工具栏 -->
+        <item>
+         <layout class="QHBoxLayout" name="resToggleToolbar">
+          <item>
+           <widget class="QPushButton" name="resBtnTogglePanel">
+            <property name="text"><string>◀ 收起参数面板</string></property>
+            <property name="maximumSize"><size><width>140</width><height>28</height></size></property>
+            <property name="styleSheet"><string>font-size:12px; padding:2px 8px;</string></property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="resToggleSpacer">
+            <property name="orientation"><enum>Qt::Horizontal</enum></property>
+            <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+           </spacer>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QSplitter" name="resSplitter">
+          <property name="orientation"><enum>Qt::Horizontal</enum></property>
+          <widget class="QWidget" name="resLeftWidget">
+         <layout class="QVBoxLayout" name="resLeftLayout">
+          <!-- 文件设置 -->
+          <item>
+           <widget class="QGroupBox" name="resFileGroupBox">
+            <property name="title"><string>文件设置</string></property>
+            <property name="checkable"><bool>true</bool></property>
+            <property name="checked"><bool>true</bool></property>
+            <layout class="QVBoxLayout" name="resFileLayout">
+             <item>
+              <layout class="QHBoxLayout" name="resCalPro1Row">
+               <item><widget class="QLabel" name="resLblCalPro1"><property name="text"><string>标定数据文件夹:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="resEditCalPro1"><property name="text"><string>data/calibrationResult/raw</string></property><property name="placeholderText"><string>选择包含 X.raw, allK_i1.raw 等的文件夹</string></property></widget></item>
+               <item><widget class="QPushButton" name="resBtnCalPro1Browse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="resCalPro2Row">
+               <item><widget class="QLabel" name="resLblCalPro2"><property name="text"><string>标定文件Pro2:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="resEditCalPro2"><property name="text"><string></string></property><property name="placeholderText"><string>备用标定目录（可留空）</string></property></widget></item>
+               <item><widget class="QPushButton" name="resBtnCalPro2Browse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="resScanRow">
+               <item><widget class="QLabel" name="resLblScan"><property name="text"><string>扫描图像文件夹:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="resEditScanFolder"><property name="text"><string>data/pic/BGA静态</string></property><property name="placeholderText"><string>选择包含 1/ 和 2/ 子目录的扫描文件夹</string></property></widget></item>
+               <item><widget class="QPushButton" name="resBtnScanBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="resEpiRow">
+               <item><widget class="QLabel" name="resLblEpiFile"><property name="text"><string>极线参数文件:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="resEditEpiFile"><property name="text"><string>D:/Calibration/epipolar_params.mat</string></property></widget></item>
+               <item><widget class="QPushButton" name="resBtnEpiBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 双光栅重建参数 -->
+          <item>
+           <widget class="QGroupBox" name="resDualGroupBox">
+            <property name="title"><string>双光栅重建参数</string></property>
+            <property name="checkable"><bool>true</bool></property>
+            <property name="checked"><bool>true</bool></property>
+            <layout class="QVBoxLayout" name="resDualLayout">
+             <item>
+              <layout class="QHBoxLayout" name="resDecodeRow">
+               <item><widget class="QLabel" name="resLblDecode"><property name="text"><string>解码类型:</string></property></widget></item>
+               <item><widget class="QComboBox" name="resComboDecodeType"><item><property name="text"><string>multi_freq</string></property></item></widget></item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="resOrderedRow">
+               <item><widget class="QLabel" name="resLblOrdered"><property name="text"><string>生成有序点云:</string></property></widget></item>
+               <item><widget class="QCheckBox" name="resCheckOrdered"><property name="checked"><bool>true</bool></property><property name="text"><string/></property></widget></item>
+              </layout>
+             </item>
+             <!-- 解码参数设置 -->
+             <item>
+              <widget class="QGroupBox" name="resFreqGroupBox">
+               <property name="title"><string>解码参数设置</string></property>
+               <layout class="QGridLayout" name="resFreqGrid">
+                <item row="0" column="0"><widget class="QLabel" name="resLblFreq1"><property name="text"><string>频率1:</string></property></widget></item>
+                <item row="0" column="1"><widget class="QSpinBox" name="resSpinFreq1"><property name="maximum"><number>200</number></property><property name="value"><number>64</number></property></widget></item>
+                <item row="0" column="2"><widget class="QLabel" name="resLblShift1"><property name="text"><string>频率1相移数:</string></property></widget></item>
+                <item row="0" column="3"><widget class="QSpinBox" name="resSpinShift1"><property name="value"><number>8</number></property></widget></item>
+                <item row="1" column="0"><widget class="QLabel" name="resLblFreq2"><property name="text"><string>频率2:</string></property></widget></item>
+                <item row="1" column="1"><widget class="QSpinBox" name="resSpinFreq2"><property name="maximum"><number>200</number></property><property name="value"><number>56</number></property></widget></item>
+                <item row="1" column="2"><widget class="QLabel" name="resLblShift2"><property name="text"><string>频率2相移数:</string></property></widget></item>
+                <item row="1" column="3"><widget class="QSpinBox" name="resSpinShift2"><property name="value"><number>8</number></property></widget></item>
+                <item row="2" column="0"><widget class="QLabel" name="resLblFreq3"><property name="text"><string>频率3:</string></property></widget></item>
+                <item row="2" column="1"><widget class="QSpinBox" name="resSpinFreq3"><property name="maximum"><number>200</number></property><property name="value"><number>63</number></property></widget></item>
+                <item row="2" column="2"><widget class="QLabel" name="resLblShift3"><property name="text"><string>频率3相移数:</string></property></widget></item>
+                <item row="2" column="3"><widget class="QSpinBox" name="resSpinShift3"><property name="value"><number>8</number></property></widget></item>
+                <item row="3" column="0"><widget class="QLabel" name="resLblModThresh"><property name="text"><string>调制度阈值:</string></property></widget></item>
+                <item row="3" column="1"><widget class="QDoubleSpinBox" name="resDblSpinModThresh"><property name="value"><double>0.700000000000000</double></property></widget></item>
+               </layout>
+              </widget>
+             </item>
+             <!-- 重建算法参数 -->
+             <item>
+              <widget class="QGroupBox" name="resAlgoGroupBox">
+               <property name="title"><string>重建算法参数</string></property>
+               <layout class="QGridLayout" name="resAlgoGrid" columnstretch="1,2">
+                <item row="0" column="0"><widget class="QLabel" name="resLblDepthApply"><property name="text"><string>应用深度范围:</string></property></widget></item>
+                <item row="0" column="1"><widget class="QCheckBox" name="resCheckDepthRange"><property name="checked"><bool>true</bool></property><property name="text"><string/></property></widget></item>
+                <item row="1" column="0"><widget class="QLabel" name="resLblDepthMin"><property name="text"><string>最小深度(mm):</string></property></widget></item>
+                <item row="1" column="1"><widget class="QLineEdit" name="resEditDepthMin"><property name="text"><string>50.0</string></property></widget></item>
+                <item row="2" column="0"><widget class="QLabel" name="resLblDepthMax"><property name="text"><string>最大深度(mm):</string></property></widget></item>
+                <item row="2" column="1"><widget class="QLineEdit" name="resEditDepthMax"><property name="text"><string>210.0</string></property></widget></item>
+                <item row="3" column="0"><widget class="QLabel" name="resLblPhaseThresh"><property name="text"><string>相位差阈值:</string></property></widget></item>
+                <item row="3" column="1"><widget class="QLineEdit" name="resEditPhaseThresh"><property name="text"><string>0.040</string></property></widget></item>
+               </layout>
+              </widget>
+             </item>
+             <!-- 极线相位修正参数 -->
+             <item>
+              <widget class="QGroupBox" name="resEpiCorrGroupBox">
+               <property name="title"><string>极线相位修正参数</string></property>
+               <layout class="QGridLayout" name="resEpiCorrGrid">
+                <item row="0" column="0"><widget class="QLabel" name="resLblEpiThresh"><property name="text"><string>极线偏差阈值(px):</string></property></widget></item>
+                <item row="0" column="1">
+                 <widget class="QDoubleSpinBox" name="resDblSpinEpiThresh">
+                  <property name="minimum"><double>0.100000000000000</double></property>
+                  <property name="maximum"><double>10.000000000000000</double></property>
+                  <property name="singleStep"><double>0.100000000000000</double></property>
+                  <property name="value"><double>1.500000000000000</double></property>
+                  <property name="toolTip"><string>τ_epi: 典型值1-2像素</string></property>
+                 </widget>
+                </item>
+                <item row="1" column="0"><widget class="QLabel" name="resLblCentroidThresh"><property name="text"><string>质心偏移阈值:</string></property></widget></item>
+                <item row="1" column="1">
+                 <widget class="QDoubleSpinBox" name="resDblSpinCentroidThresh">
+                  <property name="minimum"><double>0.001000000000000</double></property>
+                  <property name="maximum"><double>1.000000000000000</double></property>
+                  <property name="singleStep"><double>0.010000000000000</double></property>
+                  <property name="value"><double>0.050000000000000</double></property>
+                  <property name="toolTip"><string>τ_μ: 灰度质心偏移幅度阈值</string></property>
+                 </widget>
+                </item>
+                <item row="2" column="0"><widget class="QLabel" name="resLblTmax"><property name="text"><string>最大修正幅度:</string></property></widget></item>
+                <item row="2" column="1">
+                 <widget class="QDoubleSpinBox" name="resDblSpinTmax">
+                  <property name="minimum"><double>0.100000000000000</double></property>
+                  <property name="maximum"><double>50.000000000000000</double></property>
+                  <property name="singleStep"><double>0.500000000000000</double></property>
+                  <property name="value"><double>10.000000000000000</double></property>
+                  <property name="toolTip"><string>t_max: 抑制过度修正</string></property>
+                 </widget>
+                </item>
+                <item row="3" column="0"><widget class="QLabel" name="resLblNumStable"><property name="text"><string>数值稳定阈值ε:</string></property></widget></item>
+                <item row="3" column="1">
+                 <widget class="QDoubleSpinBox" name="resDblSpinNumStable">
+                  <property name="decimals"><number>6</number></property>
+                  <property name="minimum"><double>0.000001000000000</double></property>
+                  <property name="maximum"><double>0.100000000000000</double></property>
+                  <property name="singleStep"><double>0.000100000000000</double></property>
+                  <property name="value"><double>0.001000000000000</double></property>
+                  <property name="toolTip"><string>射线与极线近似平行判断阈值</string></property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <!-- 区域分类与融合参数 -->
+             <item>
+              <widget class="QGroupBox" name="resRegionGroupBox">
+               <property name="title"><string>区域分类与融合参数</string></property>
+               <layout class="QGridLayout" name="resRegionGrid">
+                <item row="0" column="0"><widget class="QLabel" name="resLblFSNRHigh"><property name="text"><string>FSNR高阈值:</string></property></widget></item>
+                <item row="0" column="1">
+                 <widget class="QDoubleSpinBox" name="resDblSpinFSNRHigh">
+                  <property name="minimum"><double>0.000000000000000</double></property>
+                  <property name="maximum"><double>1.000000000000000</double></property>
+                  <property name="singleStep"><double>0.010000000000000</double></property>
+                  <property name="value"><double>0.300000000000000</double></property>
+                  <property name="toolTip"><string>DMA区域FSNR判定上阈值</string></property>
+                 </widget>
+                </item>
+                <item row="1" column="0"><widget class="QLabel" name="resLblFSNRLow"><property name="text"><string>FSNR低阈值:</string></property></widget></item>
+                <item row="1" column="1">
+                 <widget class="QDoubleSpinBox" name="resDblSpinFSNRLow">
+                  <property name="minimum"><double>0.000000000000000</double></property>
+                  <property name="maximum"><double>1.000000000000000</double></property>
+                  <property name="singleStep"><double>0.010000000000000</double></property>
+                  <property name="value"><double>0.150000000000000</double></property>
+                  <property name="toolTip"><string>阴影区域FSNR判定下阈值</string></property>
+                 </widget>
+                </item>
+                <item row="2" column="0"><widget class="QLabel" name="resLblModHigh"><property name="text"><string>调制度高阈值:</string></property></widget></item>
+                <item row="2" column="1">
+                 <widget class="QDoubleSpinBox" name="resDblSpinModHigh">
+                  <property name="minimum"><double>0.000000000000000</double></property>
+                  <property name="maximum"><double>255.000000000000000</double></property>
+                  <property name="singleStep"><double>1.000000000000000</double></property>
+                  <property name="value"><double>30.000000000000000</double></property>
+                  <property name="toolTip"><string>DMA区域调制度判定上阈值</string></property>
+                 </widget>
+                </item>
+                <item row="3" column="0"><widget class="QLabel" name="resLblModLow"><property name="text"><string>调制度低阈值:</string></property></widget></item>
+                <item row="3" column="1">
+                 <widget class="QDoubleSpinBox" name="resDblSpinModLow">
+                  <property name="minimum"><double>0.000000000000000</double></property>
+                  <property name="maximum"><double>255.000000000000000</double></property>
+                  <property name="singleStep"><double>1.000000000000000</double></property>
+                  <property name="value"><double>10.000000000000000</double></property>
+                  <property name="toolTip"><string>阴影区域调制度判定下阈值</string></property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 保存文件设置 -->
+          <item>
+           <widget class="QGroupBox" name="resSaveGroupBox">
+            <property name="title"><string>保存文件设置</string></property>
+            <layout class="QVBoxLayout" name="resSaveLayout">
+             <item>
+              <layout class="QHBoxLayout" name="resSaveModeRow">
+               <item><widget class="QLabel" name="resLblSaveMode"><property name="text"><string>重建模式:</string></property></widget></item>
+               <item>
+                <widget class="QComboBox" name="resComboSaveMode">
+                 <property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property>
+                 <item><property name="text"><string>单次重建</string></property></item>
+                 <item><property name="text"><string>多次重建</string></property></item>
+                </widget>
+               </item>
+               <item><widget class="QLabel" name="resLblRepeatCount"><property name="text"><string>重复次数:</string></property></widget></item>
+               <item>
+                <widget class="QSpinBox" name="resSpinRepeatCount">
+                 <property name="minimum"><number>1</number></property>
+                 <property name="maximum"><number>999</number></property>
+                 <property name="value"><number>1</number></property>
+                 <property name="enabled"><bool>false</bool></property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QHBoxLayout" name="resSavePathRow">
+               <item><widget class="QLabel" name="resLblSavePath"><property name="text"><string>保存路径:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="resEditSavePath"><property name="text"><string>D:/Scan/MonocularDual/260226/bga/info</string></property></widget></item>
+               <item><widget class="QPushButton" name="resBtnSavePathBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
+              </layout>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 重建进度 -->
+          <item>
+           <widget class="QGroupBox" name="resProgressGroupBox">
+            <property name="title"><string>重建进度</string></property>
+            <layout class="QHBoxLayout" name="resProgressLayout">
+             <item><widget class="QProgressBar" name="resProgressBar"><property name="value"><number>100</number></property></widget></item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 重建控制按钮 -->
+          <item>
+           <widget class="QPushButton" name="resBtnLoadCalib">
+            <property name="text"><string>加载标定文件</string></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="resBtnStartRebuild">
+            <property name="text"><string>开始重建</string></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="resBtnSaveCloud">
+            <property name="text"><string>保存点云</string></property>
+           </widget>
+          </item>
+         </layout>
+          </widget>
+        <!-- Right: 多页显示 -->
+         <widget class="QTabWidget" name="resTabWidget">
+          <property name="currentIndex"><number>0</number></property>
+          <!-- 相位图 -->
+          <widget class="QWidget" name="resPhaseTab">
+           <attribute name="title"><string>相位图</string></attribute>
+           <layout class="QHBoxLayout" name="resPhaseLayout">
+            <item>
+             <widget class="QGroupBox" name="resPhase1GroupBox">
+              <property name="title"><string>Pro1相位图</string></property>
+              <layout class="QVBoxLayout" name="resPhase1Layout">
+               <item>
+                <widget class="QLabel" name="resPhaseLabel1">
+                 <property name="text"><string>Pro1绝对相位</string></property>
+                 <property name="alignment"><set>Qt::AlignCenter</set></property>
+                 <property name="scaledContents"><bool>true</bool></property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QGroupBox" name="resPhase2GroupBox">
+              <property name="title"><string>Pro2相位图</string></property>
+              <layout class="QVBoxLayout" name="resPhase2Layout">
+               <item>
+                <widget class="QLabel" name="resPhaseLabel2">
+                 <property name="text"><string>Pro2绝对相位</string></property>
+                 <property name="alignment"><set>Qt::AlignCenter</set></property>
+                 <property name="scaledContents"><bool>true</bool></property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+           <!-- 3D点云 -->
+           <widget class="QWidget" name="resCloudTab">
+            <attribute name="title"><string>3D点云</string></attribute>
+            <layout class="QHBoxLayout" name="resCloudTabWrapLayout">
+             <item>
+              <widget class="QSplitter" name="resCloudSplitter">
+               <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <widget class="QGroupBox" name="resCloudProcGroupBox">
+               <property name="title"><string>点云处理</string></property>
+              <layout class="QVBoxLayout" name="resCloudProcOuterLayout">
+               <item>
+                <widget class="QScrollArea" name="resCloudProcScroll">
+                 <property name="widgetResizable"><bool>true</bool></property>
+                 <property name="frameShape"><enum>QFrame::NoFrame</enum></property>
+                 <widget class="QWidget" name="resCloudProcScrollContent">
+                  <layout class="QVBoxLayout" name="resCloudProcScrollLayout">
+
+                   <!-- ── 导入点云 ── -->
+                   <item>
+                    <widget class="QPushButton" name="pcBtnImportCloud">
+                     <property name="text"><string>导入点云文件...</string></property>
+                     <property name="toolTip"><string>加载 PLY / PCD / OBJ / STL 等格式的点云文件</string></property>
+                     <property name="styleSheet"><string notr="true">QPushButton { font-weight: bold; padding: 6px; }</string></property>
+                    </widget>
+                   </item>
+
+                   <!-- ── 点云列表 ── -->
+                   <item>
+                    <widget class="QListWidget" name="pcCloudListWidget">
+                     <property name="minimumSize"><size><width>0</width><height>90</height></size></property>
+                     <property name="maximumSize"><size><width>16777215</width><height>160</height></size></property>
+                     <property name="contextMenuPolicy"><enum>Qt::CustomContextMenu</enum></property>
+                     <property name="toolTip"><string>已导入的点云列表，右键可重命名/删除/显示隐藏</string></property>
+                     <property name="selectionMode"><enum>QAbstractItemView::ExtendedSelection</enum></property>
+                     <property name="styleSheet"><string notr="true">QListWidget { font-size: 11px; }
+QListWidget::item { padding: 2px 4px; }
+QListWidget::item:selected { background: #3399ff; color: white; }</string></property>
+                    </widget>
+                   </item>
+
+                   <!-- ── 基本操作 ── -->
+                   <item>
+                    <widget class="QGroupBox" name="pcBasicGroupBox">
+                     <property name="title"><string>基本操作</string></property>
+                     <layout class="QGridLayout" name="pcBasicGrid">
+                      <item row="0" column="0">
+                       <widget class="QPushButton" name="pcBtnCropROI">
+                        <property name="text"><string>ROI裁剪</string></property>
+                        <property name="toolTip"><string>框选区域裁剪点云</string></property>
+                       </widget>
+                      </item>
+                      <item row="0" column="1">
+                       <widget class="QPushButton" name="pcBtnCropPlane">
+                        <property name="text"><string>平面裁剪</string></property>
+                        <property name="toolTip"><string>沿指定平面裁剪点云</string></property>
+                       </widget>
+                      </item>
+                      <item row="1" column="0">
+                       <widget class="QPushButton" name="pcBtnSubsample">
+                        <property name="text"><string>降采样</string></property>
+                        <property name="toolTip"><string>体素降采样减少点数</string></property>
+                       </widget>
+                      </item>
+                      <item row="1" column="1">
+                       <layout class="QHBoxLayout" name="pcSubsampleRow">
+                        <item><widget class="QLabel" name="pcLblVoxelSize"><property name="text"><string>体素:</string></property></widget></item>
+                        <item>
+                         <widget class="QDoubleSpinBox" name="pcSpinVoxelSize">
+                          <property name="minimum"><double>0.001000000000000</double></property>
+                          <property name="maximum"><double>10.000000000000000</double></property>
+                          <property name="singleStep"><double>0.010000000000000</double></property>
+                          <property name="value"><double>0.050000000000000</double></property>
+                          <property name="suffix"><string> mm</string></property>
+                         </widget>
+                        </item>
+                       </layout>
+                      </item>
+                      <item row="2" column="0">
+                       <widget class="QPushButton" name="pcBtnMerge">
+                        <property name="text"><string>合并点云</string></property>
+                        <property name="toolTip"><string>合并Pro1与Pro2点云</string></property>
+                       </widget>
+                      </item>
+                      <item row="2" column="1">
+                       <widget class="QPushButton" name="pcBtnDuplicate">
+                        <property name="text"><string>去除重复点</string></property>
+                        <property name="toolTip"><string>去除距离阈值内的重复点</string></property>
+                       </widget>
+                      </item>
+                     </layout>
+                    </widget>
+                   </item>
+  
+                   <!-- ── 滤波去噪 ── -->
+                   <item>
+                    <widget class="QGroupBox" name="pcFilterGroupBox">
+                     <property name="title"><string>滤波去噪</string></property>
+                     <layout class="QVBoxLayout" name="pcFilterLayout">
+                      <item>
+                       <layout class="QHBoxLayout" name="pcSORRow">
+                        <item>
+                         <widget class="QPushButton" name="pcBtnSOR">
+                          <property name="text"><string>SOR滤波</string></property>
+                          <property name="toolTip"><string>统计离群值移除 (Statistical Outlier Removal)</string></property>
+                         </widget>
+                        </item>
+                        <item><widget class="QLabel" name="pcLblSORK"><property name="text"><string>K:</string></property></widget></item>
+                        <item>
+                         <widget class="QSpinBox" name="pcSpinSORK">
+                          <property name="minimum"><number>2</number></property>
+                          <property name="maximum"><number>200</number></property>
+                          <property name="value"><number>20</number></property>
+                          <property name="toolTip"><string>K近邻数</string></property>
+                         </widget>
+                        </item>
+                        <item><widget class="QLabel" name="pcLblSORStd"><property name="text"><string>σ:</string></property></widget></item>
+                        <item>
+                         <widget class="QDoubleSpinBox" name="pcSpinSORStd">
+                          <property name="minimum"><double>0.100000000000000</double></property>
+                          <property name="maximum"><double>10.000000000000000</double></property>
+                          <property name="singleStep"><double>0.100000000000000</double></property>
+                          <property name="value"><double>2.000000000000000</double></property>
+                          <property name="toolTip"><string>标准差倍数阈值</string></property>
+                         </widget>
+                        </item>
+                       </layout>
+                      </item>
+                      <item>
+                       <layout class="QHBoxLayout" name="pcRORRow">
+                        <item>
+                         <widget class="QPushButton" name="pcBtnROR">
+                          <property name="text"><string>ROR滤波</string></property>
+                          <property name="toolTip"><string>半径离群值移除 (Radius Outlier Removal)</string></property>
+                         </widget>
+                        </item>
+                        <item><widget class="QLabel" name="pcLblRORRadius"><property name="text"><string>R:</string></property></widget></item>
+                        <item>
+                         <widget class="QDoubleSpinBox" name="pcSpinRORRadius">
+                          <property name="minimum"><double>0.001000000000000</double></property>
+                          <property name="maximum"><double>50.000000000000000</double></property>
+                          <property name="singleStep"><double>0.010000000000000</double></property>
+                          <property name="value"><double>0.100000000000000</double></property>
+                          <property name="suffix"><string> mm</string></property>
+                          <property name="toolTip"><string>搜索半径</string></property>
+                         </widget>
+                        </item>
+                        <item><widget class="QLabel" name="pcLblRORMin"><property name="text"><string>N:</string></property></widget></item>
+                        <item>
+                         <widget class="QSpinBox" name="pcSpinRORMin">
+                          <property name="minimum"><number>1</number></property>
+                          <property name="maximum"><number>100</number></property>
+                          <property name="value"><number>5</number></property>
+                          <property name="toolTip"><string>最小邻域点数</string></property>
+                         </widget>
+                        </item>
+                       </layout>
+                      </item>
+                      <item>
+                       <layout class="QHBoxLayout" name="pcPassRow">
+                        <item>
+                         <widget class="QPushButton" name="pcBtnPassThrough">
+                          <property name="text"><string>直通滤波</string></property>
+                          <property name="toolTip"><string>按坐标轴范围过滤</string></property>
+                         </widget>
+                        </item>
+                        <item>
+                         <widget class="QComboBox" name="pcComboPassAxis">
+                          <item><property name="text"><string>Z轴</string></property></item>
+                          <item><property name="text"><string>X轴</string></property></item>
+                          <item><property name="text"><string>Y轴</string></property></item>
+                         </widget>
+                        </item>
+                        <item>
+                         <widget class="QLineEdit" name="pcEditPassMin">
+                          <property name="placeholderText"><string>最小</string></property>
+                          <property name="maximumSize"><size><width>60</width><height>16777215</height></size></property>
+                         </widget>
+                        </item>
+                        <item><widget class="QLabel" name="pcLblPassSep"><property name="text"><string>~</string></property></widget></item>
+                        <item>
+                         <widget class="QLineEdit" name="pcEditPassMax">
+                          <property name="placeholderText"><string>最大</string></property>
+                          <property name="maximumSize"><size><width>60</width><height>16777215</height></size></property>
+                         </widget>
+                        </item>
+                       </layout>
+                      </item>
+                      <item>
+                       <widget class="QPushButton" name="pcBtnGaussian">
+                        <property name="text"><string>高斯平滑</string></property>
+                        <property name="toolTip"><string>基于邻域的高斯加权平滑</string></property>
+                       </widget>
+                      </item>
+                     </layout>
+                    </widget>
+                   </item>
+  
+                   <!-- ── 几何分析 ── -->
+                   <item>
+                    <widget class="QGroupBox" name="pcGeomGroupBox">
+                     <property name="title"><string>几何分析</string></property>
+                     <layout class="QGridLayout" name="pcGeomGrid">
+                      <item row="0" column="0">
+                       <widget class="QPushButton" name="pcBtnFitPlane">
+                        <property name="text"><string>平面拟合</string></property>
+                        <property name="toolTip"><string>PCA或RANSAC拟合参考平面</string></property>
+                       </widget>
+                      </item>
+                      <item row="0" column="1">
+                       <widget class="QComboBox" name="pcComboFitMethod">
+                        <item><property name="text"><string>PCA</string></property></item>
+                        <item><property name="text"><string>RANSAC</string></property></item>
+                        <item><property name="text"><string>最小二乘</string></property></item>
+                       </widget>
+                      </item>
+                      <item row="1" column="0">
+                       <widget class="QPushButton" name="pcBtnNormal">
+                        <property name="text"><string>法线估计</string></property>
+                        <property name="toolTip"><string>计算逐点法向量</string></property>
+                       </widget>
+                      </item>
+                      <item row="1" column="1">
+                       <layout class="QHBoxLayout" name="pcNormalRow">
+                        <item><widget class="QLabel" name="pcLblNormalR"><property name="text"><string>半径:</string></property></widget></item>
+                        <item>
+                         <widget class="QDoubleSpinBox" name="pcSpinNormalR">
+                          <property name="minimum"><double>0.001000000000000</double></property>
+                          <property name="maximum"><double>10.000000000000000</double></property>
+                          <property name="singleStep"><double>0.010000000000000</double></property>
+                          <property name="value"><double>0.200000000000000</double></property>
+                          <property name="suffix"><string> mm</string></property>
+                         </widget>
+                        </item>
+                       </layout>
+                      </item>
+                      <item row="2" column="0">
+                       <widget class="QPushButton" name="pcBtnCurvature">
+                        <property name="text"><string>曲率计算</string></property>
+                        <property name="toolTip"><string>计算逐点曲率</string></property>
+                       </widget>
+                      </item>
+                      <item row="2" column="1">
+                       <widget class="QPushButton" name="pcBtnRoughness">
+                        <property name="text"><string>粗糙度</string></property>
+                        <property name="toolTip"><string>计算局部粗糙度</string></property>
+                       </widget>
+                      </item>
+                      <item row="3" column="0">
+                       <widget class="QPushButton" name="pcBtnICP">
+                        <property name="text"><string>ICP配准</string></property>
+                        <property name="toolTip"><string>点云迭代最近点配准</string></property>
+                       </widget>
+                      </item>
+                      <item row="3" column="1">
+                       <widget class="QPushButton" name="pcBtnDistance">
+                        <property name="text"><string>距离映射</string></property>
+                        <property name="toolTip"><string>点到参考面距离映射</string></property>
+                       </widget>
+                      </item>
+                     </layout>
+                    </widget>
+                   </item>
+  
+                   <!-- ── 坐标变换 ── -->
+                   <item>
+                    <widget class="QGroupBox" name="pcTransformGroupBox">
+                     <property name="title"><string>坐标变换</string></property>
+                     <layout class="QVBoxLayout" name="pcTransformLayout">
+                      <item>
+                       <layout class="QHBoxLayout" name="pcAlignRow">
+                        <item>
+                         <widget class="QPushButton" name="pcBtnPCAAlign">
+                          <property name="text"><string>PCA对齐</string></property>
+                          <property name="toolTip"><string>主成分轴自动对齐至XYZ坐标</string></property>
+                         </widget>
+                        </item>
+                        <item>
+                         <widget class="QPushButton" name="pcBtnCenter">
+                          <property name="text"><string>居中原点</string></property>
+                          <property name="toolTip"><string>平移重心到原点</string></property>
+                         </widget>
+                        </item>
+                        <item>
+                         <widget class="QPushButton" name="pcBtnLevelPlane">
+                          <property name="text"><string>基准平面校正</string></property>
+                          <property name="toolTip"><string>将拟合平面旋转至水平</string></property>
+                         </widget>
+                        </item>
+                       </layout>
+                      </item>
+                      <item>
+                       <layout class="QHBoxLayout" name="pcRotateRow">
+                        <item><widget class="QLabel" name="pcLblRotate"><property name="text"><string>旋转(°):</string></property></widget></item>
+                        <item><widget class="QLabel" name="pcLblRX"><property name="text"><string>Rx</string></property></widget></item>
+                        <item>
+                         <widget class="QDoubleSpinBox" name="pcSpinRotX">
+                          <property name="minimum"><double>-360.000000000000000</double></property>
+                          <property name="maximum"><double>360.000000000000000</double></property>
+                          <property name="singleStep"><double>1.000000000000000</double></property>
+                         </widget>
+                        </item>
+                        <item><widget class="QLabel" name="pcLblRY"><property name="text"><string>Ry</string></property></widget></item>
+                        <item>
+                         <widget class="QDoubleSpinBox" name="pcSpinRotY">
+                          <property name="minimum"><double>-360.000000000000000</double></property>
+                          <property name="maximum"><double>360.000000000000000</double></property>
+                          <property name="singleStep"><double>1.000000000000000</double></property>
+                         </widget>
+                        </item>
+                        <item><widget class="QLabel" name="pcLblRZ"><property name="text"><string>Rz</string></property></widget></item>
+                        <item>
+                         <widget class="QDoubleSpinBox" name="pcSpinRotZ">
+                          <property name="minimum"><double>-360.000000000000000</double></property>
+                          <property name="maximum"><double>360.000000000000000</double></property>
+                          <property name="singleStep"><double>1.000000000000000</double></property>
+                         </widget>
+                        </item>
+                       </layout>
+                      </item>
+                      <item>
+                       <layout class="QHBoxLayout" name="pcTranslateRow">
+                        <item><widget class="QLabel" name="pcLblTranslate"><property name="text"><string>平移(mm):</string></property></widget></item>
+                        <item><widget class="QLabel" name="pcLblTX"><property name="text"><string>Tx</string></property></widget></item>
+                        <item>
+                         <widget class="QDoubleSpinBox" name="pcSpinTransX">
+                          <property name="minimum"><double>-1000.000000000000000</double></property>
+                          <property name="maximum"><double>1000.000000000000000</double></property>
+                          <property name="singleStep"><double>0.100000000000000</double></property>
+                         </widget>
+                        </item>
+                        <item><widget class="QLabel" name="pcLblTY"><property name="text"><string>Ty</string></property></widget></item>
+                        <item>
+                         <widget class="QDoubleSpinBox" name="pcSpinTransY">
+                          <property name="minimum"><double>-1000.000000000000000</double></property>
+                          <property name="maximum"><double>1000.000000000000000</double></property>
+                          <property name="singleStep"><double>0.100000000000000</double></property>
+                         </widget>
+                        </item>
+                        <item><widget class="QLabel" name="pcLblTZ"><property name="text"><string>Tz</string></property></widget></item>
+                        <item>
+                         <widget class="QDoubleSpinBox" name="pcSpinTransZ">
+                          <property name="minimum"><double>-1000.000000000000000</double></property>
+                          <property name="maximum"><double>1000.000000000000000</double></property>
+                          <property name="singleStep"><double>0.100000000000000</double></property>
+                         </widget>
+                        </item>
+                       </layout>
+                      </item>
+                      <item>
+                       <widget class="QPushButton" name="pcBtnApplyTransform">
+                        <property name="text"><string>应用变换</string></property>
+                        <property name="toolTip"><string>将旋转和平移应用到点云</string></property>
+                       </widget>
+                      </item>
+                     </layout>
+                    </widget>
+                   </item>
+  
+                   <!-- ── 视图切换 ── -->
+                   <item>
+                    <widget class="QGroupBox" name="pcViewGroupBox">
+                     <property name="title"><string>视图切换</string></property>
+                     <layout class="QGridLayout" name="pcViewGrid">
+                      <item row="0" column="0">
+                       <widget class="QPushButton" name="pcBtnViewFront">
+                        <property name="text"><string>正视图 (XZ)</string></property>
+                        <property name="toolTip"><string>前视图：沿Y轴负方向</string></property>
+                       </widget>
+                      </item>
+                      <item row="0" column="1">
+                       <widget class="QPushButton" name="pcBtnViewBack">
+                        <property name="text"><string>后视图</string></property>
+                        <property name="toolTip"><string>后视图：沿Y轴正方向</string></property>
+                       </widget>
+                      </item>
+                      <item row="1" column="0">
+                       <widget class="QPushButton" name="pcBtnViewLeft">
+                        <property name="text"><string>左视图 (YZ)</string></property>
+                        <property name="toolTip"><string>左视图：沿X轴正方向</string></property>
+                       </widget>
+                      </item>
+                      <item row="1" column="1">
+                       <widget class="QPushButton" name="pcBtnViewRight">
+                        <property name="text"><string>右视图</string></property>
+                        <property name="toolTip"><string>右视图：沿X轴负方向</string></property>
+                       </widget>
+                      </item>
+                      <item row="2" column="0">
+                       <widget class="QPushButton" name="pcBtnViewTop">
+                        <property name="text"><string>俯视图 (XY)</string></property>
+                        <property name="toolTip"><string>顶视图：沿Z轴负方向</string></property>
+                       </widget>
+                      </item>
+                      <item row="2" column="1">
+                       <widget class="QPushButton" name="pcBtnViewBottom">
+                        <property name="text"><string>仰视图</string></property>
+                        <property name="toolTip"><string>底视图：沿Z轴正方向</string></property>
+                       </widget>
+                      </item>
+                      <item row="3" column="0">
+                       <widget class="QPushButton" name="pcBtnViewIsometric">
+                        <property name="text"><string>等轴测</string></property>
+                        <property name="toolTip"><string>等轴测视图</string></property>
+                       </widget>
+                      </item>
+                      <item row="3" column="1">
+                       <widget class="QPushButton" name="pcBtnViewReset">
+                        <property name="text"><string>重置视图</string></property>
+                        <property name="toolTip"><string>恢复默认摄像机位置</string></property>
+                       </widget>
+                      </item>
+                     </layout>
+                    </widget>
+                   </item>
+  
+                   <!-- ── 导出 ── -->
+                   <item>
+                    <widget class="QGroupBox" name="pcExportGroupBox">
+                     <property name="title"><string>导出</string></property>
+                     <layout class="QGridLayout" name="pcExportGrid">
+                      <item row="0" column="0">
+                       <widget class="QPushButton" name="pcBtnExportPLY">
+                        <property name="text"><string>导出 PLY</string></property>
+                       </widget>
+                      </item>
+                      <item row="0" column="1">
+                       <widget class="QPushButton" name="pcBtnExportPCD">
+                        <property name="text"><string>导出 PCD</string></property>
+                       </widget>
+                      </item>
+                      <item row="1" column="0">
+                       <widget class="QPushButton" name="pcBtnExportCSV">
+                        <property name="text"><string>导出 CSV</string></property>
+                       </widget>
+                      </item>
+                      <item row="1" column="1">
+                       <widget class="QPushButton" name="pcBtnScreenshot">
+                        <property name="text"><string>视图截图</string></property>
+                        <property name="toolTip"><string>将当前3D视图保存为图片</string></property>
+                       </widget>
+                      </item>
+                     </layout>
+                    </widget>
+                   </item>
+  
+                   <!-- 弹簧占位 -->
+                   <item>
+                    <spacer name="pcScrollBottomSpacer">
+                     <property name="orientation"><enum>Qt::Vertical</enum></property>
+                     <property name="sizeHint" stdset="0"><size><width>20</width><height>10</height></size></property>
+                    </spacer>
+                   </item>
+  
+                  </layout>
+                 </widget>
+                </widget>
+               </item>
+              </layout>
+              </widget>
+             <!-- Right: 3D视图 -->
+              <widget class="QWidget" name="resCloud3DWidget">
+              <layout class="QVBoxLayout" name="resCloudLayout" stretch="0,20,1">
+             <item>
+              <widget class="QGroupBox" name="resCloudCtrlGroupBox">
+               <property name="title"><string>点云显示控制</string></property>
+               <layout class="QHBoxLayout" name="resCloudCtrlLayout">
+                <item><widget class="QCheckBox" name="resCheckGrid"><property name="text"><string>网格显示</string></property></widget></item>
+                <item><widget class="QCheckBox" name="resCheckWireframe"><property name="text"><string>线框模式</string></property></widget></item>
+                <item><widget class="QCheckBox" name="resCheckInvert"><property name="text"><string>高度反转</string></property></widget></item>
+                <item>
+                 <spacer name="resCloudSpacer">
+                  <property name="orientation"><enum>Qt::Horizontal</enum></property>
+                  <property name="sizeHint" stdset="0"><size><width>400</width><height>20</height></size></property>
+                 </spacer>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="resCloudLabel">
+               <property name="styleSheet"><string notr="true">background-color: #2b2b2b; color: white;</string></property>
+               <property name="text"><string>[3D 点云渲染区]</string></property>
+               <property name="alignment"><set>Qt::AlignCenter</set></property>
+               <property name="scaledContents"><bool>true</bool></property>
+              </widget>
+             </item>
+             <!-- 重建日志 (嵌入3D点云下方) -->
+             <item>
+              <widget class="QGroupBox" name="resLogGroupBox">
+               <property name="title"><string>重建日志</string></property>
+               <property name="maximumSize"><size><width>16777215</width><height>150</height></size></property>
+               <layout class="QVBoxLayout" name="resLogInnerLayout">
+                <item>
+                 <widget class="QTextEdit" name="resLogText">
+                  <property name="readOnly"><bool>false</bool></property>
+                  <property name="maximumSize"><size><width>16777215</width><height>120</height></size></property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+              </layout>
+              </widget>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+         </widget>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+
+      <!-- ==================== Tab 3: BGA共面度测量 ==================== -->
+      <widget class="QWidget" name="bgaWidget">
+       <attribute name="title">
+        <string>BGA共面度测量</string>
+       </attribute>
+       <layout class="QHBoxLayout" name="bgaMainLayout" stretch="2,5">
+        <item>
+         <layout class="QVBoxLayout" name="bgaLeftLayout">
+          <!-- 共面度测量控制 -->
+          <item>
+           <widget class="QGroupBox" name="bgaCtrlGroupBox">
+            <property name="title"><string>共面度测量控制</string></property>
+            <layout class="QVBoxLayout" name="bgaCtrlLayout">
+             <item>
+              <layout class="QHBoxLayout" name="bgaCountRow">
+               <item><widget class="QLabel" name="bgaLblCount"><property name="text"><string>测量次数:</string></property></widget></item>
+               <item>
+                <widget class="QSpinBox" name="bgaSpinCount">
+                 <property name="minimum"><number>1</number></property>
+                 <property name="maximum"><number>100</number></property>
+                 <property name="value"><number>10</number></property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item><widget class="QPushButton" name="bgaBtnStart"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>开始测量</string></property></widget></item>
+             <item><widget class="QPushButton" name="bgaBtnPlot"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>数据画图</string></property></widget></item>
+             <item><widget class="QPushButton" name="bgaBtnBallShow"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>焊球定位显示</string></property></widget></item>
+             <item><widget class="QPushButton" name="bgaBtnImport"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>数据导入</string></property></widget></item>
+             <item><widget class="QPushButton" name="bgaBtnSave"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>结果保存</string></property></widget></item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 共面度数据 -->
+          <item>
+           <widget class="QGroupBox" name="bgaDataGroupBox">
+            <property name="title"><string>共面度数据</string></property>
+            <layout class="QVBoxLayout" name="bgaDataLayout">
+             <item>
+              <widget class="QTextEdit" name="bgaDataText">
+               <property name="readOnly"><bool>false</bool></property>
+               <property name="placeholderText"><string>共面度测量结果将在此显示...</string></property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="bgaRightLayout" stretch="1,1">
+          <!-- 测量结果显示 (直方图+折线图) -->
+          <item>
+           <widget class="QGroupBox" name="bgaChartGroupBox">
+            <property name="title"><string>测量结果显示</string></property>
+            <layout class="QHBoxLayout" name="bgaChartLayout">
+             <item>
+              <widget class="QLabel" name="bgaBarLabel">
+               <property name="text"><string>直方图</string></property>
+               <property name="alignment"><set>Qt::AlignCenter</set></property>
+               <property name="scaledContents"><bool>true</bool></property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="bgaLineLabel">
+               <property name="text"><string>折线图</string></property>
+               <property name="alignment"><set>Qt::AlignCenter</set></property>
+               <property name="scaledContents"><bool>true</bool></property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 焊球定位结果 -->
+          <item>
+           <widget class="QGroupBox" name="bgaBallGroupBox">
+            <property name="title"><string>焊球定位结果</string></property>
+            <layout class="QVBoxLayout" name="bgaBallLayout">
+             <item>
+              <widget class="QLabel" name="bgaBallLabel">
+               <property name="text"><string>焊球定位结果图</string></property>
+               <property name="alignment"><set>Qt::AlignCenter</set></property>
+               <property name="scaledContents"><bool>true</bool></property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+
+      <!-- ==================== Tab 4: QFP共面度测量 ==================== -->
+      <widget class="QWidget" name="qfpWidget">
+       <attribute name="title">
+        <string>QFP共面度测量</string>
+       </attribute>
+       <layout class="QHBoxLayout" name="qfpMainLayout" stretch="2,5">
+        <item>
+         <layout class="QVBoxLayout" name="qfpLeftLayout">
+          <!-- 共面度测量控制 -->
+          <item>
+           <widget class="QGroupBox" name="qfpCtrlGroupBox">
+            <property name="title"><string>共面度测量控制</string></property>
+            <layout class="QVBoxLayout" name="qfpCtrlLayout">
+             <item>
+              <layout class="QHBoxLayout" name="qfpCountRow">
+               <item><widget class="QLabel" name="qfpLblCount"><property name="text"><string>测量次数:</string></property></widget></item>
+               <item>
+                <widget class="QSpinBox" name="qfpSpinCount">
+                 <property name="minimum"><number>1</number></property>
+                 <property name="maximum"><number>100</number></property>
+                 <property name="value"><number>10</number></property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item><widget class="QPushButton" name="qfpBtnStart"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>开始测量</string></property></widget></item>
+             <item><widget class="QPushButton" name="qfpBtnPlot"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>数据画图</string></property></widget></item>
+             <item><widget class="QPushButton" name="qfpBtnPinShow"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>引脚分割显示</string></property></widget></item>
+             <item><widget class="QPushButton" name="qfpBtnImport"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>数据导入</string></property></widget></item>
+             <item><widget class="QPushButton" name="qfpBtnSave"><property name="styleSheet"><string notr="true">background-color: rgb(255,255,255);</string></property><property name="text"><string>结果保存</string></property></widget></item>
+            </layout>
+           </widget>
+          </item>
+          <!-- 共面度与翘曲度数据 -->
+          <item>
+           <widget class="QGroupBox" name="qfpDataGroupBox">
+            <property name="title"><string>共面度与翘曲度数据</string></property>
+            <layout class="QVBoxLayout" name="qfpDataLayout">
+             <item>
+              <widget class="QTextEdit" name="qfpDataText">
+               <property name="readOnly"><bool>false</bool></property>
+               <property name="placeholderText"><string>QFP共面度/翘曲度结果将在此显示...</string></property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QTabWidget" name="qfpResultTabWidget">
+          <property name="currentIndex"><number>0</number></property>
+          <!-- 引脚分割 -->
+          <widget class="QWidget" name="qfpSegTab">
+           <attribute name="title"><string>引脚分割</string></attribute>
+           <layout class="QVBoxLayout" name="qfpSegTabLayout">
+            <item>
+             <widget class="QLabel" name="qfpSegLabel">
+              <property name="text"><string>引脚分割结果图</string></property>
+              <property name="alignment"><set>Qt::AlignCenter</set></property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+          <!-- 测量结果 (2×2 网格) -->
+          <widget class="QWidget" name="qfpChartTab">
+           <attribute name="title"><string>测量结果</string></attribute>
+           <layout class="QGridLayout" name="qfpChartGridLayout">
+            <item row="0" column="0">
+             <widget class="QLabel" name="qfpCoplanarLabel">
+              <property name="text"><string>共面度分布</string></property>
+              <property name="alignment"><set>Qt::AlignCenter</set></property>
+             </widget>
+            </item>
+            <item row="0" column="1">
+             <widget class="QLabel" name="qfpMaxWarpAngleLabel">
+              <property name="text"><string>最大翘曲角</string></property>
+              <property name="alignment"><set>Qt::AlignCenter</set></property>
+             </widget>
+            </item>
+            <item row="1" column="0">
+             <widget class="QLabel" name="qfpAvgWarpAngleLabel">
+              <property name="text"><string>平均翘曲角</string></property>
+              <property name="alignment"><set>Qt::AlignCenter</set></property>
+             </widget>
+            </item>
+            <item row="1" column="1">
+             <widget class="QLabel" name="qfpWarpHeightLabel">
+              <property name="text"><string>最大翘曲高度</string></property>
+              <property name="alignment"><set>Qt::AlignCenter</set></property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+
+     </widget>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <layoutdefault spacing="6" margin="11"/>
+ <connections/>
+</ui>

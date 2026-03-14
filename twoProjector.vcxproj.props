@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- 环境库路径宏定义 -->
+  <PropertyGroup Label="EnvLibPaths">
+    <EnvLib>F:\project\Envlib</EnvLib>
+    <QtDir>D:\software\anaconda\Library</QtDir>
+    <QtInc>$(QtDir)\include\qt</QtInc>
+    <QtLib>$(ProjectDir)qt_deploy\lib</QtLib>
+    <AnacondaLib>$(QtDir)\lib</AnacondaLib>
+    <OpenCVDir>$(EnvLib)\opencv455\opencv</OpenCVDir>
+    <PCLDir>$(EnvLib)\PCL1.12.1</PCLDir>
+    <EigenDir>$(EnvLib)\eigen-3.4.0</EigenDir>
+    <VTKDir>$(PCLDir)\3rdParty\VTK</VTKDir>
+    <BoostDir>$(PCLDir)\3rdParty\Boost</BoostDir>
+    <FLANNDir>$(PCLDir)\3rdParty\FLANN</FLANNDir>
+    <QhullDir>$(PCLDir)\3rdParty\Qhull</QhullDir>
+    <CeresDir>$(EnvLib)\ceres</CeresDir>
+    <Project2Dir>$(ProjectDir)Project2</Project2Dir>
+    <CyUSBDir>$(Project2Dir)\projector_dlpc_api\third_party\cyusbserial</CyUSBDir>
+  </PropertyGroup>
+
+  <!-- 输出目录配置 -->
+  <PropertyGroup Label="OutputPaths" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutDir>$(ProjectDir)build\Release\</OutDir>
+    <IntDir>$(ProjectDir)build\Release\obj\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Label="OutputPaths" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <OutDir>$(ProjectDir)build\Debug\</OutDir>
+    <IntDir>$(ProjectDir)build\Debug\obj\</IntDir>
+  </PropertyGroup>
+
+  <!-- Include 目录（所有配置通用） -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>
+        $(ProjectDir);
+        $(ProjectDir)src;
+        $(QtInc);
+        $(QtInc)\QtCore;
+        $(QtInc)\QtGui;
+        $(QtInc)\QtWidgets;
+        $(QtInc)\QtOpenGL;
+        $(OpenCVDir)\build\include;
+        $(PCLDir)\include\pcl-1.12;
+        $(EigenDir);
+        $(BoostDir)\include\boost-1_78;
+        $(VTKDir)\include\vtk-9.1;
+        $(FLANNDir)\include;
+        $(QhullDir)\include;
+        $(CeresDir)\ceres-install\include;
+        $(CeresDir)\glog\install\include;
+        $(CeresDir)\gflags\install\include;
+        $(CeresDir)\suitesparse\install\include\suitesparse;
+        $(Project2Dir)\Project2;
+        $(Project2Dir)\projector_dlpc_api\include;
+        $(CyUSBDir);
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>
+        NOMINMAX;
+        _USE_MATH_DEFINES;
+        _CRT_SECURE_NO_WARNINGS;
+        PCL_NO_PRECOMPILE;
+        BOOST_ALL_NO_LIB;
+        _HAS_AUTO_PTR_ETC=1;
+        %(PreprocessorDefinitions)
+      </PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <!-- Link 库目录 + 依赖（Release） -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Link>
+      <AdditionalLibraryDirectories>
+        $(QtLib);
+        $(AnacondaLib);
+        $(CyUSBDir);
+        $(OpenCVDir)\build\x64\vc15\lib;
+        $(PCLDir)\lib;
+        $(VTKDir)\lib;
+        $(BoostDir)\lib;
+        $(FLANNDir)\lib;
+        $(QhullDir)\lib;
+        $(CeresDir)\ceres-install\lib;
+        $(CeresDir)\glog\install\lib;
+        $(CeresDir)\gflags\install\lib;
+        $(CeresDir)\suitesparse\install\lib;
+        %(AdditionalLibraryDirectories)
+      </AdditionalLibraryDirectories>
+      <AdditionalDependencies>
+        cyusbserial.lib;
+        Qt5Core.lib;Qt5Gui.lib;Qt5Widgets.lib;Qt5OpenGL.lib;
+        opencv_world455.lib;
+        pcl_common.lib;pcl_features.lib;pcl_filters.lib;pcl_io.lib;pcl_io_ply.lib;pcl_kdtree.lib;pcl_keypoints.lib;pcl_ml.lib;pcl_octree.lib;pcl_outofcore.lib;pcl_people.lib;pcl_recognition.lib;pcl_registration.lib;pcl_sample_consensus.lib;pcl_search.lib;pcl_segmentation.lib;pcl_stereo.lib;pcl_surface.lib;pcl_tracking.lib;pcl_visualization.lib;
+        flann_cpp_s.lib;qhullstatic_r.lib;qhullcpp.lib;
+        ceres.lib;glog.lib;gflags_static.lib;
+        suitesparseconfig.lib;libcholmod.lib;libcxsparse.lib;libamd.lib;libcamd.lib;libccolamd.lib;libcolamd.lib;
+        libboost_filesystem-vc142-mt-x64-1_78.lib;libboost_system-vc142-mt-x64-1_78.lib;libboost_thread-vc142-mt-x64-1_78.lib;libboost_date_time-vc142-mt-x64-1_78.lib;libboost_iostreams-vc142-mt-x64-1_78.lib;libboost_serialization-vc142-mt-x64-1_78.lib;libboost_chrono-vc142-mt-x64-1_78.lib;libboost_atomic-vc142-mt-x64-1_78.lib;
+        vtkCommonCore-9.1.lib;vtkCommonDataModel-9.1.lib;vtkCommonExecutionModel-9.1.lib;vtkCommonMath-9.1.lib;vtkCommonMisc-9.1.lib;vtkCommonSystem-9.1.lib;vtkCommonTransforms-9.1.lib;vtkCommonColor-9.1.lib;vtkCommonComputationalGeometry-9.1.lib;
+        vtkRenderingCore-9.1.lib;vtkRenderingOpenGL2-9.1.lib;vtkRenderingFreeType-9.1.lib;vtkRenderingAnnotation-9.1.lib;vtkRenderingContext2D-9.1.lib;vtkRenderingContextOpenGL2-9.1.lib;vtkRenderingVolume-9.1.lib;vtkRenderingVolumeOpenGL2-9.1.lib;vtkRenderingUI-9.1.lib;vtkRenderingLabel-9.1.lib;vtkRenderingLOD-9.1.lib;
+        vtkGUISupportQt-9.1.lib;vtkRenderingQt-9.1.lib;vtkViewsQt-9.1.lib;
+        vtkInteractionStyle-9.1.lib;vtkInteractionWidgets-9.1.lib;
+        vtkFiltersCore-9.1.lib;vtkFiltersGeneral-9.1.lib;vtkFiltersGeometry-9.1.lib;vtkFiltersSources-9.1.lib;vtkFiltersExtraction-9.1.lib;vtkFiltersModeling-9.1.lib;vtkFiltersStatistics-9.1.lib;vtkFiltersHybrid-9.1.lib;
+        vtkIOCore-9.1.lib;vtkIOGeometry-9.1.lib;vtkIOImage-9.1.lib;vtkIOLegacy-9.1.lib;vtkIOPLY-9.1.lib;vtkIOXML-9.1.lib;vtkIOXMLParser-9.1.lib;
+        vtkChartsCore-9.1.lib;vtkViewsCore-9.1.lib;vtkViewsContext2D-9.1.lib;vtkInfovisCore-9.1.lib;vtkInfovisLayout-9.1.lib;
+        vtksys-9.1.lib;vtkglew-9.1.lib;vtkfreetype-9.1.lib;vtkzlib-9.1.lib;vtkjpeg-9.1.lib;vtkpng-9.1.lib;vtktiff-9.1.lib;vtkdoubleconversion-9.1.lib;vtkloguru-9.1.lib;vtklz4-9.1.lib;vtklzma-9.1.lib;vtkexpat-9.1.lib;vtkpugixml-9.1.lib;vtkfmt-9.1.lib;vtkkissfft-9.1.lib;vtkDICOMParser-9.1.lib;vtkmetaio-9.1.lib;vtkjsoncpp-9.1.lib;vtklibxml2-9.1.lib;
+        kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <!-- Link 库目录 + 依赖（Debug） -->
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Link>
+      <AdditionalLibraryDirectories>
+        $(QtLib);
+        $(AnacondaLib);
+        $(CyUSBDir);
+        $(OpenCVDir)\build\x64\vc15\lib;
+        $(PCLDir)\lib;
+        $(VTKDir)\lib;
+        $(BoostDir)\lib;
+        $(FLANNDir)\lib;
+        $(QhullDir)\lib;
+        $(CeresDir)\ceres-install\lib;
+        $(CeresDir)\glog\install\lib;
+        $(CeresDir)\gflags\install\lib;
+        $(CeresDir)\suitesparse\install\lib;
+        %(AdditionalLibraryDirectories)
+      </AdditionalLibraryDirectories>
+      <AdditionalDependencies>
+        cyusbserial.lib;
+        Qt5Cored.lib;Qt5Guid.lib;Qt5Widgetsd.lib;Qt5OpenGLd.lib;
+        opencv_world455d.lib;
+        pcl_common_debug.lib;pcl_features_debug.lib;pcl_filters_debug.lib;pcl_io_debug.lib;pcl_io_ply_debug.lib;pcl_kdtree_debug.lib;pcl_keypoints_debug.lib;pcl_ml_debug.lib;pcl_octree_debug.lib;pcl_outofcore_debug.lib;pcl_people_debug.lib;pcl_recognition_debug.lib;pcl_registration_debug.lib;pcl_sample_consensus_debug.lib;pcl_search_debug.lib;pcl_segmentation_debug.lib;pcl_stereo_debug.lib;pcl_surface_debug.lib;pcl_tracking_debug.lib;pcl_visualization_debug.lib;
+        flann_cpp_s.lib;qhullstatic_r.lib;qhullcpp.lib;
+        ceres.lib;glog.lib;gflags_static.lib;
+        suitesparseconfig.lib;libcholmod.lib;libcxsparse.lib;libamd.lib;libcamd.lib;libccolamd.lib;libcolamd.lib;
+        libboost_filesystem-vc142-mt-gd-x64-1_78.lib;libboost_system-vc142-mt-gd-x64-1_78.lib;libboost_thread-vc142-mt-gd-x64-1_78.lib;libboost_date_time-vc142-mt-gd-x64-1_78.lib;libboost_iostreams-vc142-mt-gd-x64-1_78.lib;libboost_serialization-vc142-mt-gd-x64-1_78.lib;libboost_chrono-vc142-mt-gd-x64-1_78.lib;libboost_atomic-vc142-mt-gd-x64-1_78.lib;
+        vtkCommonCore-9.1.lib;vtkCommonDataModel-9.1.lib;vtkCommonExecutionModel-9.1.lib;vtkCommonMath-9.1.lib;vtkCommonMisc-9.1.lib;vtkCommonSystem-9.1.lib;vtkCommonTransforms-9.1.lib;vtkCommonColor-9.1.lib;vtkCommonComputationalGeometry-9.1.lib;
+        vtkRenderingCore-9.1.lib;vtkRenderingOpenGL2-9.1.lib;vtkRenderingFreeType-9.1.lib;vtkRenderingAnnotation-9.1.lib;vtkRenderingContext2D-9.1.lib;vtkRenderingContextOpenGL2-9.1.lib;vtkRenderingVolume-9.1.lib;vtkRenderingVolumeOpenGL2-9.1.lib;vtkRenderingUI-9.1.lib;vtkRenderingLabel-9.1.lib;vtkRenderingLOD-9.1.lib;
+        vtkGUISupportQt-9.1.lib;vtkRenderingQt-9.1.lib;vtkViewsQt-9.1.lib;
+        vtkInteractionStyle-9.1.lib;vtkInteractionWidgets-9.1.lib;
+        vtkFiltersCore-9.1.lib;vtkFiltersGeneral-9.1.lib;vtkFiltersGeometry-9.1.lib;vtkFiltersSources-9.1.lib;vtkFiltersExtraction-9.1.lib;vtkFiltersModeling-9.1.lib;vtkFiltersStatistics-9.1.lib;vtkFiltersHybrid-9.1.lib;
+        vtkIOCore-9.1.lib;vtkIOGeometry-9.1.lib;vtkIOImage-9.1.lib;vtkIOLegacy-9.1.lib;vtkIOPLY-9.1.lib;vtkIOXML-9.1.lib;vtkIOXMLParser-9.1.lib;
+        vtkChartsCore-9.1.lib;vtkViewsCore-9.1.lib;vtkViewsContext2D-9.1.lib;vtkInfovisCore-9.1.lib;vtkInfovisLayout-9.1.lib;
+        vtksys-9.1.lib;vtkglew-9.1.lib;vtkfreetype-9.1.lib;vtkzlib-9.1.lib;vtkjpeg-9.1.lib;vtkpng-9.1.lib;vtktiff-9.1.lib;vtkdoubleconversion-9.1.lib;vtkloguru-9.1.lib;vtklz4-9.1.lib;vtklzma-9.1.lib;vtkexpat-9.1.lib;vtkpugixml-9.1.lib;vtkfmt-9.1.lib;vtkkissfft-9.1.lib;vtkDICOMParser-9.1.lib;vtkmetaio-9.1.lib;vtkjsoncpp-9.1.lib;vtklibxml2-9.1.lib;
+        kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;
+        %(AdditionalDependencies)
+      </AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

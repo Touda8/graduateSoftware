@@ -1,0 +1,98 @@
+# CODEOWNERS — 多智能体文件归属声明
+#
+# 每当 PR 修改对应路径下的文件时，GitHub 自动请求对应负责人审查。
+# 用于在多智能体并行开发时明确每个 Agent 的代码所有权边界。
+#
+# 格式：<路径模式> <所有者>
+# ---------------------------------------------------------------
+
+# =============================================================
+# Agent 1：需求解析智能体
+# 职责：生成接口契约、任务清单、UI-算法绑定表
+# =============================================================
+src/common/interfaces.h                 @agent1
+docs/task_list.md                       @agent1
+docs/ui_algorithm_binding.md            @agent1
+docs/forbidden_list.md                  @agent1
+
+# =============================================================
+# Agent 2：UI 开发智能体
+# 职责：MainWindow 实现、VTK 嵌入、参数持久化
+# =============================================================
+src/MainWindow.h                        @agent2
+src/MainWindow.cpp                      @agent2
+src/visualization/                      @agent2
+src/common/Config.h                     @agent2
+src/common/Config.cpp                   @agent2
+docs/ui_logic.md                        @agent2
+
+# =============================================================
+# Agent 3：算法开发智能体
+# 职责：MATLAB→C++ 翻译、多线程池、点云 IO
+# =============================================================
+src/reconstruction/                     @agent3
+src/measurement/                        @agent3
+src/pointcloud/                         @agent3
+src/common/ThreadPool.h                 @agent3
+
+# =============================================================
+# Agent 4：工程化智能体
+# 职责：VS2019 工程文件、库路径配置、Git 初始化
+# =============================================================
+*.sln                                   @agent4
+*.vcxproj                               @agent4
+*.vcxproj.props                         @agent4
+*.vcxproj.filters                       @agent4
+build.bat                               @agent4
+.gitignore                              @agent4
+docs/build_guide.md                     @agent4
+
+# =============================================================
+# Agent 5：异常分析智能体
+# 职责：异常类层次、线程安全日志、全链路异常捕获
+# =============================================================
+src/common/Exceptions.h                 @agent5
+src/common/Logger.h                     @agent5
+src/common/Logger.cpp                   @agent5
+
+# =============================================================
+# Agent 6：测试与验收智能体
+# 职责：单元测试、集成测试、验收报告
+# =============================================================
+test/                                   @agent6
+docs/acceptance_report.md               @agent6
+
+# =============================================================
+# 所有 Agent 共同维护（重要架构文件，需联合审查）
+# =============================================================
+docs/global_description.md              @agent1 @agent2 @agent3
+docs/agent.md                           @agent1
+docs/instruction.md                     @agent1
+.github/copilot-instructions.md         @agent1 @agent4
+
+# =============================================================
+# Agent 定义文件归属（.github/agents/）
+# 每个 Agent 文件由对应职责人维护
+# =============================================================
+.github/agents/chief-orchestrator.md   @agent1 @agent4
+.github/agents/needs-analyst.md        @agent1
+.github/agents/ui-builder.md           @agent2
+.github/agents/algo-translator.md      @agent3
+.github/agents/project-engineer.md     @agent4
+.github/agents/exception-handler.md    @agent5
+.github/agents/test-runner.md          @agent6
+
+# =============================================================
+# Instruction 文件归属（.github/instructions/）
+# =============================================================
+.github/instructions/global-conventions.instructions.md   @agent1 @agent4
+.github/instructions/ui-agent.instructions.md             @agent2
+.github/instructions/algorithm-agent.instructions.md      @agent3
+.github/instructions/engineering-agent.instructions.md    @agent4
+.github/instructions/exception-agent.instructions.md      @agent5
+.github/instructions/test-agent.instructions.md           @agent6
+
+# =============================================================
+# 禁止修改区域（UI 原始文件，任何 PR 必须人工审查）
+# =============================================================
+twoProjector.ui                         # NO OWNER — manual review required

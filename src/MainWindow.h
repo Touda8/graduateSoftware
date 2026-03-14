@@ -1,0 +1,162 @@
+#pragma once
+
+#include <QMainWindow>
+#include <memory>
+#include "common/interfaces.h"
+#include "reconstruction/CalibLoader.h"
+#include "reconstruction/ReconstructionPipeline.h"
+#include "pointcloud/PointCloudIO.h"
+#include "pointcloud/PointCloudFilter.h"
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <thread>
+
+// forward declarations
+namespace Ui { class twoProjectorClass; }
+namespace tp { class VtkWidget; }
+class ProjectorManager;
+
+class MainWindow : public QMainWindow {
+    Q_OBJECT
+
+public:
+    // 重建状态机
+    enum class State { IDLE, CALIB_LOADING, READY, RECONSTRUCTING, DONE };
+
+    explicit MainWindow(QWidget* parent = nullptr);
+    ~MainWindow() noexcept override;
+
+signals:
+    // 日志追加（可从工作线程 emit）
+    void logMessage(const QString& msg);
+    // 进度更新（可从工作线程 emit）
+    void progressUpdated(int percent);
+
+private slots:
+    // ---- resWidget: 文件设置按钮 ----
+    void onResBtnCalPro1BrowseClicked();
+    void onResBtnCalPro2BrowseClicked();
+    void onResBtnScanBrowseClicked();
+    void onResBtnEpiBrowseClicked();
+    void onResBtnSavePathBrowseClicked();
+    void onResBtnTogglePanelClicked();
+
+    // ---- resWidget: 重建控制按钮 ----
+    void onResBtnLoadCalibClicked();
+    void onResBtnStartRebuildClicked();
+    void onResBtnSaveCloudClicked();
+
+    // ---- resWidget: 重建参数变更 ----
+    void onResComboDecodeTypeChanged(int index);
+    void onResCheckOrderedChanged(int state);
+    void onResSpinFreq1Changed(int val);
+    void onResSpinFreq2Changed(int val);
+    void onResSpinFreq3Changed(int val);
+    void onResSpinShift1Changed(int val);
+    void onResSpinShift2Changed(int val);
+    void onResSpinShift3Changed(int val);
+    void onResDblSpinModThreshChanged(double val);
+    void onResCheckDepthRangeChanged(int state);
+    void onResDblSpinEpiThreshChanged(double val);
+    void onResDblSpinCentroidThreshChanged(double val);
+    void onResDblSpinTmaxChanged(double val);
+    void onResDblSpinNumStableChanged(double val);
+    void onResDblSpinFSNRHighChanged(double val);
+    void onResDblSpinFSNRLowChanged(double val);
+    void onResDblSpinModHighChanged(double val);
+    void onResDblSpinModLowChanged(double val);
+    void onResComboSaveModeChanged(int index);
+    void onResSpinRepeatCountChanged(int val);
+    void onResCheckGridChanged(int state);
+    void onResCheckWireframeChanged(int state);
+    void onResCheckInvertChanged(int state);
+
+    // ---- 点云处理按钮 ----
+    void onPcBtnImportCloudClicked();
+    void onPcBtnCropROIClicked();
+    void onPcBtnCropPlaneClicked();
+    void onPcBtnSubsampleClicked();
+    void onPcBtnMergeClicked();
+    void onPcBtnDuplicateClicked();
+    void onPcBtnSORClicked();
+    void onPcBtnRORClicked();
+    void onPcBtnPassThroughClicked();
+    void onPcBtnGaussianClicked();
+    void onPcBtnFitPlaneClicked();
+    void onPcBtnNormalClicked();
+    void onPcBtnCurvatureClicked();
+    void onPcBtnRoughnessClicked();
+    void onPcBtnICPClicked();
+    void onPcBtnDistanceClicked();
+    void onPcBtnPCAAlignClicked();
+    void onPcBtnCenterClicked();
+    void onPcBtnLevelPlaneClicked();
+    void onPcBtnApplyTransformClicked();
+    void onPcBtnViewFrontClicked();
+    void onPcBtnViewBackClicked();
+    void onPcBtnViewLeftClicked();
+    void onPcBtnViewRightClicked();
+    void onPcBtnViewTopClicked();
+    void onPcBtnViewBottomClicked();
+    void onPcBtnViewIsometricClicked();
+    void onPcBtnViewResetClicked();
+    void onPcBtnExportPLYClicked();
+    void onPcBtnExportPCDClicked();
+    void onPcBtnExportCSVClicked();
+    void onPcBtnScreenshotClicked();
+
+    // ---- 点云参数控件 ----
+    void onPcSpinVoxelSizeChanged(double val);
+    void onPcSpinSORKChanged(int val);
+    void onPcSpinSORStdChanged(double val);
+    void onPcSpinRORRadiusChanged(double val);
+    void onPcSpinRORMinChanged(int val);
+    void onPcComboPassAxisChanged(int index);
+    void onPcComboFitMethodChanged(int index);
+    void onPcSpinNormalRChanged(double val);
+    void onPcSpinRotXChanged(double val);
+    void onPcSpinRotYChanged(double val);
+    void onPcSpinRotZChanged(double val);
+    void onPcSpinTransXChanged(double val);
+    void onPcSpinTransYChanged(double val);
+    void onPcSpinTransZChanged(double val);
+
+    // ---- bgaWidget ----
+    void onBgaSpinCountChanged(int val);
+    void onBgaBtnStartClicked();
+    void onBgaBtnPlotClicked();
+    void onBgaBtnBallShowClicked();
+    void onBgaBtnImportClicked();
+    void onBgaBtnSaveClicked();
+
+    // ---- qfpWidget ----
+    void onQfpSpinCountChanged(int val);
+    void onQfpBtnStartClicked();
+    void onQfpBtnPlotClicked();
+    void onQfpBtnPinShowClicked();
+    void onQfpBtnImportClicked();
+    void onQfpBtnSaveClicked();
+
+    // ---- capWidget: 投影仪控制 ----
+    void updateProStatusLabel(int projIdx, bool connected);
+    void appendCapLog(const QString& msg);
+
+    // ---- 内部辅助 ----
+    void appendLog(const QString& msg);
+    void setState(State s);
+
+private:
+    void setupConnections();
+    void initVtkWidget();
+    void setupProjectorManager();
+
+    Ui::twoProjectorClass* ui;
+    State state_ = State::IDLE;
+    tp::VtkWidget* vtkWidget_ = nullptr;
+    ProjectorManager* projMgr_ = nullptr;
+    bool continuousRunning_ = false;
+    tp::ReconParams reconParams_;
+    tp::DualCalibData dualCalib_;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr currentCloud_;
+    tp::PointCloudFilter filter_;
+};
