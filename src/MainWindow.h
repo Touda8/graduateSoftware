@@ -171,7 +171,7 @@ private:
     bool continuousRunning_ = false;
     tp::ReconParams reconParams_;
     tp::DualCalibData dualCalib_;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr currentCloud_;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr currentCloud_;
     tp::PointCloudFilter filter_;
     std::vector<double> bgaCoplanarities_;
 };

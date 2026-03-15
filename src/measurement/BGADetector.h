@@ -1,16 +1,38 @@
-﻿#pragma once
+#pragma once
 
 #include "common/interfaces.h"
 #include <cmath>
 
 namespace tp {
 
+// allDealTwoplane 算法配置参数
+struct BGAConfig {
+    double circularityThresh = 0.85;
+    int areaMin = 300;
+    int areaMax = 4000;
+    int edgeDistThresh = 1;
+    int minBallPoints = 20;
+    double zFlip = 160.0;
+    int morphCloseRadius = 3;
+};
+
+// 单个焊球测量结果
+struct BallResult {
+    int order = 0;         // 排序编号
+    int row = 0;           // 所在行号
+    double xc = 0, yc = 0; // 圆心(像素)
+    double radius = 0;     // 等效半径
+    double x3d = 0, y3d = 0, z3d = 0; // 3D质心(mm)
+    double height = 0;     // 到基板平面距离(mm)
+    bool success = false;
+};
+
 class BGADetector : public IMeasure {
 public:
     BGADetector() = default;
     ~BGADetector() noexcept override = default;
 
-    // IMeasure interface
+    // IMeasure interface (兼容旧接口)
     std::vector<cv::Vec3f> detect2DBalls(
         const cv::Mat& brightImage, const cv::Mat& mask) override;
     std::vector<Eigen::Vector3d> localize3DBalls(
@@ -20,13 +42,29 @@ public:
     double calcCoplanarity(
         const std::vector<Eigen::Vector3d>& points) override;
 
+    // allDealTwoplane 全流程（新算法入口）
+    // 输入: 2D图像, 标定X/Y矩阵, 高度图Z, 配置
+    // 输出: BallResult 列表，可选地生成可视化图
+    std::vector<BallResult> runAllDealTwoplane(
+        const cv::Mat& bgaImage,
+        const cv::Mat& X, const cv::Mat& Y, const cv::Mat& Z,
+        const BGAConfig& config = {});
+
+    // 获取上一次测量的基板法向量和d参数
+    Eigen::Vector3d getSubstrateNormal() const { return substrateNormal_; }
+    double getSubstrateD() const { return substrateD_; }
+
 private:
-    // 迭代圆拟合：返回(cx, cy, r)
-    cv::Vec3d fitCircleIterative(
-        const std::vector<cv::Point2d>& pts, int maxIter, double beta);
-    // 二阶曲面拟合: Z = ax²+by²+cxy+dx+ey+f
-    std::array<double, 6> fitQuadSurface(
-        const std::vector<Eigen::Vector3d>& pts);
+    // 生成焊球掩膜（芯片定位+Otsu+形态学+筛选）
+    cv::Mat detectBallMask(const cv::Mat& gray, const BGAConfig& cfg);
+
+    // PCA平面拟合，返回法向量。centroid和d通过引用返回
+    Eigen::Vector3d fitPCAPlane(const std::vector<Eigen::Vector3d>& pts,
+                                Eigen::Vector3d& centroid, double& d);
+
+    // 存储基板平面参数
+    Eigen::Vector3d substrateNormal_{0, 0, -1};
+    double substrateD_ = 0;
 };
 
 } // namespace tp

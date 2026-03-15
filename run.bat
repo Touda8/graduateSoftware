@@ -1,76 +1,70 @@
 @echo off
+REM ============================================================
 REM graduateSoftware Application Launcher
-REM Double-click to launch; auto-build if executable is missing
-
+REM   Usage: run.bat [Release|Debug]
+REM ============================================================
 setlocal
 
-REM Always run from script directory (double-click safe)
-set "PROJ_DIR=%~dp0"
-pushd "%PROJ_DIR%" >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Cannot enter project directory: %PROJ_DIR%
-    pause
-    exit /b 1
-)
+REM Always change to the script directory (double-click safe)
+set "PROJ=%~dp0"
+pushd "%PROJ%" >nul 2>&1
 
-REM Parse configuration (default Release)
 set "CONFIG=Release"
 if /I "%~1"=="Debug" set "CONFIG=Debug"
 
-set "EXE_PATH=build\%CONFIG%\twoProjector.exe"
+set "EXE=build\%CONFIG%\twoProjector.exe"
 
-REM If exe missing, auto build once
-if not exist "%EXE_PATH%" (
-    echo.
-    echo [INFO] %EXE_PATH% not found, auto building %CONFIG% ...
+REM Auto-build if exe is missing
+if not exist "%EXE%" (
+    echo [INFO] %EXE% not found, building %CONFIG% first...
     call build.bat %CONFIG%
 )
 
-if not exist "%EXE_PATH%" (
-    echo.
-    echo ============================================================================
-    echo ERROR: Executable still not found after build attempt.
-    echo ============================================================================
-    echo Expected: %CD%\%EXE_PATH%
-    echo.
+if not exist "%EXE%" (
+    echo [ERROR] Executable not found after build: %EXE%
     pause
-    popd
-    exit /b 1
+    popd & endlocal & exit /b 1
 )
 
-REM Runtime paths
-set "QT_DEPLOY=%CD%\qt_deploy"
-set "QT_PLUGIN_PATH=%QT_DEPLOY%\plugins"
-set "BUILD_DIR=%CD%\build\%CONFIG%"
+REM ---- DLL search paths (order matters; build dir first to avoid conflicts) ----
+set "BUILD_DIR=%PROJ%build\%CONFIG%"
+set "QT_DEPLOY=%PROJ%qt_deploy"
+set "ANACONDA_BIN=D:\software\anaconda\Library\bin"
 set "OPENCV_BIN=F:\project\Envlib\opencv455\opencv\build\x64\vc15\bin"
 set "PCL_BIN=F:\project\Envlib\PCL1.12.1\bin"
 set "VTK_BIN=F:\project\Envlib\PCL1.12.1\3rdParty\VTK\bin"
 set "BOOST_BIN=F:\project\Envlib\PCL1.12.1\3rdParty\Boost\lib"
 set "QHULL_BIN=F:\project\Envlib\PCL1.12.1\3rdParty\Qhull\bin"
-set "ANACONDA_BIN=D:\software\anaconda\Library\bin"
 
-set "PATH=%BUILD_DIR%;%QT_DEPLOY%;%VTK_BIN%;%OPENCV_BIN%;%PCL_BIN%;%BOOST_BIN%;%QHULL_BIN%;%ANACONDA_BIN%;%PATH%"
+set "QT_PLUGIN_PATH=%PROJ%qt_deploy\plugins"
+set "PATH=%BUILD_DIR%;%QT_DEPLOY%;%ANACONDA_BIN%;%VTK_BIN%;%OPENCV_BIN%;%PCL_BIN%;%BOOST_BIN%;%QHULL_BIN%;%PATH%"
 
-echo.
-echo ============================================================================
-echo                   Running twoProjector Application
-echo ============================================================================
-echo Configuration:  %CONFIG%
-echo Executable:     %CD%\%EXE_PATH%
-echo Qt Plugins:     %QT_PLUGIN_PATH%
-echo Working Dir:    %CD%
-echo.
-
-REM Launch GUI app (do not pass Debug/Release token to exe)
-echo Launching application...
-start "twoProjector" /D "%CD%" "%CD%\%EXE_PATH%"
-set "EXIT_CODE=%ERRORLEVEL%"
-
-if not "%EXIT_CODE%"=="0" (
-    echo.
-    echo [ERROR] Failed to start application. Exit code: %EXIT_CODE%
+REM Basic runtime preflight checks
+if not exist "%QT_DEPLOY%\Qt5Core.dll" (
+    echo [ERROR] Missing Qt runtime: %QT_DEPLOY%\Qt5Core.dll
+    echo [ERROR] Please ensure qt_deploy is complete.
     pause
+    popd & endlocal & exit /b 1
+)
+
+if not exist "%QT_PLUGIN_PATH%\platforms\qwindows.dll" (
+    echo [ERROR] Missing Qt platform plugin: %QT_PLUGIN_PATH%\platforms\qwindows.dll
+    pause
+    popd & endlocal & exit /b 1
+)
+
+echo.
+echo ============================================================
+echo   Running twoProjector [%CONFIG%]
+echo   EXE: %PROJ%%EXE%
+echo ============================================================
+echo.
+
+start "twoProjector" /D "%PROJ%" "%PROJ%%EXE%"
+set "RUN_RESULT=%ERRORLEVEL%"
+if not "%RUN_RESULT%"=="0" (
+    echo [WARN] Launcher returned non-zero exit code: %RUN_RESULT%
 )
 
 popd
-endlocal & exit /b %EXIT_CODE%
+endlocal & exit /b %RUN_RESULT%

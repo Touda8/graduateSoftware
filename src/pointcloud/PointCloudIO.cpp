@@ -104,6 +104,52 @@ void PointCloudIO::saveCSV(CloudPtr cloud, const std::string& path) {
     Logger::instance().info("Saved CSV: " + path);
 }
 
+// ========== XYZRGB 彩色点云保存 ==========
+
+static void ensureParentDir(const std::string& path) {
+    auto parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(parent, ec);
+        if (ec)
+            throw IOException("cannot create dir " + parent.string() + ": " + ec.message());
+    }
+}
+
+void PointCloudIO::savePLY(ColorCloudPtr cloud, const std::string& path) {
+    if (!cloud || cloud->empty())
+        throw IOException("savePLY(RGB): cloud is null or empty");
+    ensureParentDir(path);
+    if (pcl::io::savePLYFileBinary(path, *cloud) != 0)
+        throw IOException("savePLY(RGB): failed to write " + path);
+    Logger::instance().info("Saved PLY(RGB): " + path);
+}
+
+void PointCloudIO::savePCD(ColorCloudPtr cloud, const std::string& path) {
+    if (!cloud || cloud->empty())
+        throw IOException("savePCD(RGB): cloud is null or empty");
+    ensureParentDir(path);
+    if (pcl::io::savePCDFileBinary(path, *cloud) != 0)
+        throw IOException("savePCD(RGB): failed to write " + path);
+    Logger::instance().info("Saved PCD(RGB): " + path);
+}
+
+void PointCloudIO::saveCSV(ColorCloudPtr cloud, const std::string& path) {
+    if (!cloud || cloud->empty())
+        throw IOException("saveCSV(RGB): cloud is null or empty");
+    ensureParentDir(path);
+    std::ofstream ofs(path);
+    if (!ofs.is_open())
+        throw IOException("saveCSV(RGB): failed to open " + path);
+    ofs << "x,y,z,r,g,b\n";
+    for (const auto& p : cloud->points) {
+        ofs << p.x << ',' << p.y << ',' << p.z << ','
+            << static_cast<int>(p.r) << ',' << static_cast<int>(p.g) << ','
+            << static_cast<int>(p.b) << '\n';
+    }
+    Logger::instance().info("Saved CSV(RGB): " + path);
+}
+
 // 功能：加载PLY文件，输入：path，返回：点云指针
 PointCloudIO::CloudPtr PointCloudIO::loadPLY(const std::string& path) {
     auto fsPath = std::filesystem::u8path(path);

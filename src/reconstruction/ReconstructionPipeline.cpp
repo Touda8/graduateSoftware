@@ -3,8 +3,19 @@
 #include "common/Logger.h"
 #include <opencv2/imgproc.hpp>
 #include <cmath>
+#include <chrono>
 
 namespace tp {
+
+namespace {
+// 计时辅助宏
+using SteadyClock = std::chrono::steady_clock;
+using Ms = std::chrono::milliseconds;
+
+inline long long elapsedMs(const SteadyClock::time_point& start) {
+    return std::chrono::duration_cast<Ms>(SteadyClock::now() - start).count();
+}
+} // namespace
 
 void ReconstructionPipeline::setCalibData(const CalibData& calib) {
     calibData_ = calib;
@@ -104,6 +115,7 @@ static DecodeResult decodeAndHeight(
     }
 
     // 预处理：高斯滤波（匹配 MATLAB fspecial('gaussian',[9,9],3)）
+    auto tBlur = SteadyClock::now();
     auto blurImages = [&](int startIdx) {
         std::vector<cv::Mat> out;
         out.reserve(steps);
@@ -118,17 +130,26 @@ static DecodeResult decodeAndHeight(
     std::vector<cv::Mat> f1Imgs = blurImages(0);
     std::vector<cv::Mat> f2Imgs = blurImages(steps);
     std::vector<cv::Mat> f3Imgs = blurImages(2 * steps);
+    Logger::instance().info("[Timing] GaussianBlur x" + std::to_string(total) +
+        ": " + std::to_string(elapsedMs(tBlur)) + " ms");
 
+    auto tPhase = SteadyClock::now();
     cv::Mat phi1 = decoder.calcPhaseMatrix(f1Imgs, steps);
     cv::Mat phi2 = decoder.calcPhaseMatrix(f2Imgs, steps);
     cv::Mat phi3 = decoder.calcPhaseMatrix(f3Imgs, steps);
+    Logger::instance().info("[Timing] calcPhaseMatrix x3: " +
+        std::to_string(elapsedMs(tPhase)) + " ms");
 
+    auto tUnwrap = SteadyClock::now();
     cv::Mat absPhase = decoder.multiFreqUnwrap(
         phi1, phi2, phi3,
         params.freq1, params.freq2, params.freq3);
+    Logger::instance().info("[Timing] multiFreqUnwrap: " +
+        std::to_string(elapsedMs(tUnwrap)) + " ms");
 
     // 高度计算: Z = (phi*c1 + c3) / (c2*phi + 1)
     // allK_i 由 MATLAB reshape(allK_i_3D,[],3) 列主序生成，线性索引 = c*imgRows+r
+    auto tHeight = SteadyClock::now();
     cv::Mat Z = cv::Mat::zeros(imgRows, imgCols, CV_64F);
     for (int r = 0; r < imgRows; ++r) {
         for (int c = 0; c < imgCols; ++c) {
@@ -142,11 +163,17 @@ static DecodeResult decodeAndHeight(
                 Z.at<double>(r, c) = (phiVal * c1 + c3) / denom;
         }
     }
+    Logger::instance().info("[Timing] heightCalc: " +
+        std::to_string(elapsedMs(tHeight)) + " ms");
+
     DecodeResult dr;
     dr.Z = Z;
     dr.absPhase = absPhase;
     // 调制度对比度（使用频率1的图像，匹配MATLAB PhaseQualityMask）
+    auto tMod = SteadyClock::now();
     dr.modContrast = decoder.calcModulationContrast(f1Imgs, steps);
+    Logger::instance().info("[Timing] calcModContrast: " +
+        std::to_string(elapsedMs(tMod)) + " ms");
     return dr;
 }
 
@@ -173,11 +200,22 @@ DualReconResult ReconstructionPipeline::runDual(
         const int rows = calib.imgRows;
         const int cols = calib.imgCols;
 
+        auto tTotal = SteadyClock::now();
+
         // 两路投影仪各自解码+计算高度
+        Logger::instance().info("[Timing] === Pro1 decode start ===");
+        auto tDec1 = SteadyClock::now();
         auto dec1 = decodeAndHeight(
             decoder_, images1, calib.allK_i1, rows, cols, params);
+        Logger::instance().info("[Timing] Pro1 decode total: " +
+            std::to_string(elapsedMs(tDec1)) + " ms");
+
+        Logger::instance().info("[Timing] === Pro2 decode start ===");
+        auto tDec2 = SteadyClock::now();
         auto dec2 = decodeAndHeight(
             decoder_, images2, calib.allK_i2, rows, cols, params);
+        Logger::instance().info("[Timing] Pro2 decode total: " +
+            std::to_string(elapsedMs(tDec2)) + " ms");
         cv::Mat Z1 = dec1.Z;
         cv::Mat Z2 = dec2.Z;
         result.absPhase1 = dec1.absPhase;
@@ -186,6 +224,7 @@ DualReconResult ReconstructionPipeline::runDual(
         Logger::instance().info("runDual: height maps computed");
 
         // SNR加权融合（匹配MATLAB: mix_Z = (Hb1*Z1 + Hb2*Z2) / (Hb1+Hb2)）
+        auto tFusion = SteadyClock::now();
         cv::Mat snr1 = dec1.modContrast;
         cv::Mat snr2 = dec2.modContrast;
         cv::Mat mixZ = cv::Mat::zeros(rows, cols, CV_64F);
@@ -204,6 +243,8 @@ DualReconResult ReconstructionPipeline::runDual(
                     mixZ.at<double>(r, c) = z2;
             }
         }
+        Logger::instance().info("[Timing] SNR fusion: " +
+            std::to_string(elapsedMs(tFusion)) + " ms");
 
         // 防御：验证标定矩阵尺寸一致
         if (calib.X.rows != rows || calib.X.cols != cols) {
@@ -224,6 +265,7 @@ DualReconResult ReconstructionPipeline::runDual(
         }
 
         // 构建彩色点云
+        auto tCloud = SteadyClock::now();
         auto cloud = std::make_shared<
             pcl::PointCloud<pcl::PointXYZRGB>>();
         for (int r = 0; r < rows; ++r) {
@@ -246,8 +288,12 @@ DualReconResult ReconstructionPipeline::runDual(
             }
         }
 
+        Logger::instance().info("[Timing] cloudBuild: " +
+            std::to_string(elapsedMs(tCloud)) + " ms");
         Logger::instance().info("runDual: cloud size="
             + std::to_string(cloud->size()));
+        Logger::instance().info("[Timing] runDual TOTAL: " +
+            std::to_string(elapsedMs(tTotal)) + " ms");
         result.cloud = cloud;
         result.heightMap = mixZ;
         result.success = true;

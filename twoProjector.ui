@@ -1157,6 +1157,7 @@ QListWidget::item:selected { background: #3399ff; color: white; }</string></prop
                 <item><widget class="QCheckBox" name="resCheckGrid"><property name="text"><string>网格显示</string></property></widget></item>
                 <item><widget class="QCheckBox" name="resCheckWireframe"><property name="text"><string>线框模式</string></property></widget></item>
                 <item><widget class="QCheckBox" name="resCheckInvert"><property name="text"><string>高度反转</string></property></widget></item>
+                <item><widget class="QCheckBox" name="pcCheckHeightColor"><property name="text"><string>高度染色</string></property></widget></item>
                 <item>
                  <spacer name="resCloudSpacer">
                   <property name="orientation"><enum>Qt::Horizontal</enum></property>
@@ -1228,15 +1229,15 @@ QListWidget::item:selected { background: #3399ff; color: white; }</string></prop
              </item>
              <item>
               <layout class="QHBoxLayout" name="bgaImgFolderRow">
-               <item><widget class="QLabel" name="bgaLblImgFolder"><property name="text"><string>图像文件夹:</string></property></widget></item>
-               <item><widget class="QLineEdit" name="bgaEditImgFolder"><property name="placeholderText"><string>包含 1.bmp, 2.bmp ... 的文件夹</string></property></widget></item>
+               <item><widget class="QLabel" name="bgaLblImgFolder"><property name="text"><string>扫描根目录:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="bgaEditImgFolder"><property name="placeholderText"><string>含 1/(pro1) 和 2/(pro2) 子目录，如 data/pic/BGA静态</string></property></widget></item>
                <item><widget class="QPushButton" name="bgaBtnImgFolderBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
               </layout>
              </item>
              <item>
               <layout class="QHBoxLayout" name="bgaCloudFolderRow">
-               <item><widget class="QLabel" name="bgaLblCloudFolder"><property name="text"><string>点云文件夹:</string></property></widget></item>
-               <item><widget class="QLineEdit" name="bgaEditCloudFolder"><property name="placeholderText"><string>包含 1.ply, 2.ply ... 的文件夹</string></property></widget></item>
+               <item><widget class="QLabel" name="bgaLblCloudFolder"><property name="text"><string>保存路径:</string></property></widget></item>
+               <item><widget class="QLineEdit" name="bgaEditCloudFolder"><property name="placeholderText"><string>测量结果保存路径（可选）</string></property></widget></item>
                <item><widget class="QPushButton" name="bgaBtnCloudFolderBrowse"><property name="maximumSize"><size><width>50</width><height>16777215</height></size></property><property name="text"><string>浏览</string></property></widget></item>
               </layout>
              </item>

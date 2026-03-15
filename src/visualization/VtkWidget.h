@@ -7,8 +7,11 @@
 #include <vtkActor.h>
 #include <vtkProp3D.h>
 #include <vtkScalarBarActor.h>
+#include <vtkBoxWidget2.h>
+#include <vtkBoxRepresentation.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <array>
 
 namespace tp {
 
@@ -31,12 +34,23 @@ public:
     void setWireframe(bool enabled);
     void saveScreenshot(const std::string& path);
 
+    // 裁剪功能
+    void enableBoxCrop(bool enable);
+    bool isBoxCropEnabled() const;
+    // 获取当前裁剪框的范围 [xmin,xmax,ymin,ymax,zmin,zmax]
+    std::array<double, 6> getBoxBounds() const;
+
+signals:
+    void boxCropApplied(double xmin, double xmax, double ymin, double ymax,
+                        double zmin, double zmax);
+
 private:
     vtkSmartPointer<vtkRenderer> renderer_;
     vtkSmartPointer<vtkGenericOpenGLRenderWindow> renderWindow_;
     vtkSmartPointer<vtkProp3D> gridActor_;
     vtkSmartPointer<vtkActor> cloudActor_;
     vtkSmartPointer<vtkScalarBarActor> scalarBar_;
+    vtkSmartPointer<vtkBoxWidget2> boxWidget_;
 };
 
 } // namespace tp

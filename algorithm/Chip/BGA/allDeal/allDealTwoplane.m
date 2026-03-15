@@ -288,7 +288,9 @@ hanqiuMask = logical(BW_balls);
 mask_chip_save = (mask_chip+1)/2;
 I_masked = logical(mask_chip_save);
 
+
 se_erode = strel('disk', 2);
+I_masked = imerode(I_masked, se_erode);
 hanqiuMask_eroded = imerode(hanqiuMask, se_erode);
 
 se_dilate = strel('disk', 5);

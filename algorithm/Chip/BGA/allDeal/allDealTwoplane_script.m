@@ -8,7 +8,7 @@ clear; clc; close all;
 INPUT_IMAGE = '1.bmp';        % 2D图像
 INPUT_X = '../pointCal/X.mat';             % X坐标
 INPUT_Y = '../pointCal/Y.mat';             % Y坐标  
-INPUT_Z = '../pointCal/Z.mat';             % Z坐标
+INPUT_Z = 'Z.mat';             % Z坐标
 
 % 输出文件路径
 OUTPUT_DIR = './output';

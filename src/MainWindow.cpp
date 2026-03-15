@@ -22,6 +22,21 @@
 #include "measurement/BGAMeasurePipeline.h"
 
 namespace {
+// XYZ 点云转为 XYZRGB（默认白色），用于导入/滤波后赋给 currentCloud_
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzToRgb(
+    pcl::PointCloud<pcl::PointXYZ>::Ptr src)
+{
+    auto dst = std::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+    dst->reserve(src->size());
+    for (const auto& p : src->points) {
+        pcl::PointXYZRGB pt;
+        pt.x = p.x; pt.y = p.y; pt.z = p.z;
+        pt.r = 200; pt.g = 200; pt.b = 200;
+        dst->push_back(pt);
+    }
+    return dst;
+}
+
 // Windows 上 cv::imread 使用 ANSI 代码页，无法处理 UTF-8 中文路径。
 // 通过 std::filesystem::path (wchar_t) + cv::imdecode 绕过此限制。
 cv::Mat imreadSafe(const std::string& utf8Path, int flags) {
@@ -783,9 +798,7 @@ void MainWindow::startSingleReconstruction() {
                 .arg(result.absPhase2.cols).arg(result.absPhase2.rows));
 
             QMetaObject::invokeMethod(this, [this, colorCloud, img1, img2]() {
-                currentCloud_ = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-                for (const auto& pt : colorCloud->points)
-                    currentCloud_->push_back({pt.x, pt.y, pt.z});
+                currentCloud_ = colorCloud;
                 vtkWidget_->updateCloud(currentCloud_);
                 // 将重建点云添加到点云列表
                 auto* item = new QListWidgetItem(
@@ -907,11 +920,7 @@ void MainWindow::startMultiReconstruction() {
                 }
 
                 auto savePath = fs::u8path(save) / (std::to_string(iter) + ".ply");
-                auto xyzCloud = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
-                for (const auto& pt : result.cloud->points)
-                    xyzCloud->push_back({pt.x, pt.y, pt.z});
-
-                tp::PointCloudIO::savePLY(xyzCloud, savePath.string());
+                tp::PointCloudIO::savePLY(result.cloud, savePath.string());
                 emit logMessage(QStringLiteral("\u7b2c %1 \u6b21\u70b9\u4e91\u5df2\u4fdd\u5b58: %2")
                     .arg(iter).arg(QString::fromStdString(savePath.string())));
             }
@@ -1024,7 +1033,11 @@ void MainWindow::onResCheckWireframeChanged(int state) {
     if (vtkWidget_) vtkWidget_->setWireframe(state == Qt::Checked);
 }
 void MainWindow::onResCheckInvertChanged(int state) {
-    // 高度反转是可视化层高级功能，暂留
+    if (!currentCloud_ || currentCloud_->empty()) return;
+    // 反转所有点的 Z 值
+    for (auto& pt : currentCloud_->points)
+        pt.z = -pt.z;
+    vtkWidget_->updateCloud(currentCloud_);
 }
 
 // ============================================================
@@ -1039,7 +1052,7 @@ void MainWindow::onPcBtnImportCloudClicked() {
     for (const auto& path : paths) {
         try {
             auto cloud = tp::PointCloudIO::load(path.toStdString());
-            currentCloud_ = cloud;
+            currentCloud_ = xyzToRgb(cloud);
             vtkWidget_->updateCloud(currentCloud_);
             QFileInfo fi(path);
             auto* item = new QListWidgetItem(fi.fileName());
@@ -1087,7 +1100,7 @@ void MainWindow::onPcCloudListContextMenu(const QPoint& pos) {
         QString path = item->data(Qt::UserRole).toString();
         if (path.startsWith("__")) return;
         try {
-            currentCloud_ = tp::PointCloudIO::load(path.toStdString());
+            currentCloud_ = xyzToRgb(tp::PointCloudIO::load(path.toStdString()));
             vtkWidget_->updateCloud(currentCloud_);
             appendLog(QStringLiteral("重新加载: ") + QFileInfo(path).fileName());
         } catch (const std::exception& e) {
@@ -1100,7 +1113,7 @@ void MainWindow::onPcCloudListContextMenu(const QPoint& pos) {
             return;
         }
         try {
-            currentCloud_ = tp::PointCloudIO::load(path.toStdString());
+            currentCloud_ = xyzToRgb(tp::PointCloudIO::load(path.toStdString()));
             vtkWidget_->updateCloud(currentCloud_);
         } catch (const std::exception& e) {
             appendLog(QStringLiteral("加载失败: ") + e.what());
@@ -1123,11 +1136,15 @@ void MainWindow::onPcBtnSubsampleClicked() {
     std::thread([this, cloud, leafSize]() {
         try {
             tp::PointCloudFilter f;
-            auto filtered = f.voxelGrid(cloud, leafSize);
-            QMetaObject::invokeMethod(this, [this, filtered]() {
-                currentCloud_ = filtered;
-                vtkWidget_->updateCloud(filtered);
-                appendLog(QStringLiteral("体素降采样完成: %1 点").arg(filtered->size()));
+            auto xyzIn = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+            for (const auto& p : cloud->points)
+                xyzIn->push_back({p.x, p.y, p.z});
+            auto filtered = f.voxelGrid(xyzIn, leafSize);
+            auto rgbOut = xyzToRgb(filtered);
+            QMetaObject::invokeMethod(this, [this, rgbOut]() {
+                currentCloud_ = rgbOut;
+                vtkWidget_->updateCloud(rgbOut);
+                appendLog(QStringLiteral("体素降采样完成: %1 点").arg(rgbOut->size()));
             }, Qt::QueuedConnection);
         } catch (const std::exception& e) {
             QMetaObject::invokeMethod(this, [this, msg = QString(e.what())]() {
@@ -1152,11 +1169,15 @@ void MainWindow::onPcBtnSORClicked() {
     std::thread([this, cloud, meanK, stdDev]() {
         try {
             tp::PointCloudFilter f;
-            auto filtered = f.SOR(cloud, meanK, stdDev);
-            QMetaObject::invokeMethod(this, [this, filtered]() {
-                currentCloud_ = filtered;
-                vtkWidget_->updateCloud(filtered);
-                appendLog(QStringLiteral("SOR完成: %1 点").arg(filtered->size()));
+            auto xyzIn = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+            for (const auto& p : cloud->points)
+                xyzIn->push_back({p.x, p.y, p.z});
+            auto filtered = f.SOR(xyzIn, meanK, stdDev);
+            auto rgbOut = xyzToRgb(filtered);
+            QMetaObject::invokeMethod(this, [this, rgbOut]() {
+                currentCloud_ = rgbOut;
+                vtkWidget_->updateCloud(rgbOut);
+                appendLog(QStringLiteral("SOR完成: %1 点").arg(rgbOut->size()));
             }, Qt::QueuedConnection);
         } catch (const std::exception& e) {
             QMetaObject::invokeMethod(this, [this, msg = QString(e.what())]() {
@@ -1178,11 +1199,15 @@ void MainWindow::onPcBtnPassThroughClicked() {
     std::thread([this, cloud, axis]() {
         try {
             tp::PointCloudFilter f;
-            auto filtered = f.passThrough(cloud, axis, -999.0f, 999.0f);
-            QMetaObject::invokeMethod(this, [this, filtered]() {
-                currentCloud_ = filtered;
-                vtkWidget_->updateCloud(filtered);
-                appendLog(QStringLiteral("直通滤波完成: %1 点").arg(filtered->size()));
+            auto xyzIn = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+            for (const auto& p : cloud->points)
+                xyzIn->push_back({p.x, p.y, p.z});
+            auto filtered = f.passThrough(xyzIn, axis, -999.0f, 999.0f);
+            auto rgbOut = xyzToRgb(filtered);
+            QMetaObject::invokeMethod(this, [this, rgbOut]() {
+                currentCloud_ = rgbOut;
+                vtkWidget_->updateCloud(rgbOut);
+                appendLog(QStringLiteral("直通滤波完成: %1 点").arg(rgbOut->size()));
             }, Qt::QueuedConnection);
         } catch (const std::exception& e) {
             QMetaObject::invokeMethod(this, [this, msg = QString(e.what())]() {

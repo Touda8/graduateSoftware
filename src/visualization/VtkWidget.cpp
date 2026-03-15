@@ -15,6 +15,10 @@
 #include <vtkProperty.h>
 #include <vtkWindowToImageFilter.h>
 #include <vtkPNGWriter.h>
+#include <vtkBoxRepresentation.h>
+#include <vtkBoxWidget2.h>
+#include <vtkTransform.h>
+#include <vtkPlanes.h>
 #include <limits>
 #include <cmath>
 
@@ -194,6 +198,57 @@ void VtkWidget::saveScreenshot(const std::string& path) {
     writer->SetFileName(path.c_str());
     writer->SetInputConnection(filter->GetOutputPort());
     writer->Write();
+}
+
+void VtkWidget::enableBoxCrop(bool enable) {
+    if (enable) {
+        if (!boxWidget_) {
+            boxWidget_ = vtkSmartPointer<vtkBoxWidget2>::New();
+            auto* rep = vtkBoxRepresentation::SafeDownCast(boxWidget_->GetRepresentation());
+            if (rep) {
+                rep->SetPlaceFactor(1.0);
+                rep->GetOutlineProperty()->SetColor(1.0, 1.0, 0.0);
+                rep->GetOutlineProperty()->SetLineWidth(2.0);
+            }
+            boxWidget_->SetInteractor(renderWindow_->GetInteractor());
+        }
+        if (cloudActor_) {
+            double bounds[6];
+            cloudActor_->GetBounds(bounds);
+            auto* rep = vtkBoxRepresentation::SafeDownCast(boxWidget_->GetRepresentation());
+            if (rep) rep->PlaceWidget(bounds);
+        }
+        boxWidget_->On();
+        renderWindow_->Render();
+    } else {
+        if (boxWidget_) {
+            boxWidget_->Off();
+            renderWindow_->Render();
+        }
+    }
+}
+
+bool VtkWidget::isBoxCropEnabled() const {
+    return boxWidget_ && boxWidget_->GetEnabled();
+}
+
+std::array<double, 6> VtkWidget::getBoxBounds() const {
+    std::array<double, 6> bounds = {0, 0, 0, 0, 0, 0};
+    if (!boxWidget_) return bounds;
+    auto* rep = vtkBoxRepresentation::SafeDownCast(boxWidget_->GetRepresentation());
+    if (!rep) return bounds;
+
+    auto planes = vtkSmartPointer<vtkPlanes>::New();
+    rep->GetPlanes(planes);
+
+    // 从 box transform 获取 bounds
+    auto transform = vtkSmartPointer<vtkTransform>::New();
+    rep->GetTransform(transform);
+
+    // 获取 box representation 的实际 bounds
+    double* b = rep->GetBounds();
+    bounds = {b[0], b[1], b[2], b[3], b[4], b[5]};
+    return bounds;
 }
 
 } // namespace tp
