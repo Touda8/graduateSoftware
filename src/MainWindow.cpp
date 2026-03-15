@@ -21,17 +21,280 @@
 #include <QMetaType>
 #include <QImage>
 #include <QPixmap>
+#include <QRegularExpression>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <numeric>
+#include <mutex>
 #include "measurement/BGADetector.h"
 #include "measurement/BGAMeasurePipeline.h"
 #include "algorithm/picsrc/chart_bindgen.hpp"
+#include "F:/project/Envlib/daheng/GalaxySDK/Samples/C++ SDK/inc/GalaxyIncludes.h"
 
 namespace {
+using namespace GxIAPICPP;
+
+class DahengCameraService {
+public:
+    ~DahengCameraService() {
+        QString dummy;
+        close(dummy);
+        if (inited_) {
+            try { IGXFactory::GetInstance().Uninit(); }
+            catch (...) {}
+            inited_ = false;
+        }
+    }
+
+    bool isOpen() const {
+        std::lock_guard<std::mutex> lock(mtx_);
+        return opened_;
+    }
+
+    bool scan(QStringList& snList, QString& err) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!ensureInitUnlocked(err)) return false;
+        try {
+            IGXFactory::GetInstance().UpdateDeviceList(1000, devices_);
+            snList.clear();
+            for (auto& d : devices_) snList.push_back(QString::fromLocal8Bit(d.GetSN().c_str()));
+            return true;
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("扫描失败: %1").arg(e.what());
+            return false;
+        } catch (const std::exception& e) {
+            err = QStringLiteral("扫描异常: %1").arg(e.what());
+            return false;
+        }
+    }
+
+    bool open(const QString& preferredSn, QString& actualSn, QString& err) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!ensureInitUnlocked(err)) return false;
+        try {
+            IGXFactory::GetInstance().UpdateDeviceList(1000, devices_);
+            if (devices_.empty()) {
+                err = QStringLiteral("未检测到相机设备");
+                return false;
+            }
+
+            if (opened_) closeUnlocked();
+
+            QString picked = preferredSn.trimmed();
+            if (picked.isEmpty()) picked = QString::fromLocal8Bit(devices_[0].GetSN().c_str());
+
+            bool found = false;
+            for (auto& d : devices_) {
+                if (QString::fromLocal8Bit(d.GetSN().c_str()) == picked) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) picked = QString::fromLocal8Bit(devices_[0].GetSN().c_str());
+
+            dev_ = IGXFactory::GetInstance().OpenDeviceBySN(picked.toStdString().c_str(), GX_ACCESS_EXCLUSIVE);
+            remote_ = dev_->GetRemoteFeatureControl();
+            local_ = dev_->GetFeatureControl();
+            opened_ = true;
+            actualSn = QString::fromLocal8Bit(dev_->GetDeviceInfo().GetSN().c_str());
+
+            // 默认配置
+            remote_->GetEnumFeature("AcquisitionMode")->SetValue("Continuous");
+            remote_->GetEnumFeature("TriggerSelector")->SetValue("FrameStart");
+            remote_->GetEnumFeature("TriggerMode")->SetValue("Off");
+            if (remote_->IsImplemented("ExposureAuto"))
+                remote_->GetEnumFeature("ExposureAuto")->SetValue("Off");
+            return true;
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("连接失败: %1").arg(e.what());
+            return false;
+        } catch (const std::exception& e) {
+            err = QStringLiteral("连接异常: %1").arg(e.what());
+            return false;
+        }
+    }
+
+    bool close(QString& err) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        Q_UNUSED(err);
+        closeUnlocked();
+        return true;
+    }
+
+    bool applyTrigger(const QString& mode, const QString& source, QString& err) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!opened_) { err = QStringLiteral("相机未连接"); return false; }
+        try {
+            remote_->GetEnumFeature("TriggerSelector")->SetValue("FrameStart");
+            const bool on = mode.compare("On", Qt::CaseInsensitive) == 0;
+            remote_->GetEnumFeature("TriggerMode")->SetValue(on ? "On" : "Off");
+            if (on) {
+                QString src = source.trimmed();
+                if (src.compare("Software", Qt::CaseInsensitive) == 0) remote_->GetEnumFeature("TriggerSource")->SetValue("Software");
+                else if (src.compare("Line0", Qt::CaseInsensitive) == 0) remote_->GetEnumFeature("TriggerSource")->SetValue("Line0");
+                else if (src.compare("Line1", Qt::CaseInsensitive) == 0) remote_->GetEnumFeature("TriggerSource")->SetValue("Line1");
+                else if (src.compare("Line2", Qt::CaseInsensitive) == 0) remote_->GetEnumFeature("TriggerSource")->SetValue("Line2");
+                else remote_->GetEnumFeature("TriggerSource")->SetValue("Software");
+            }
+            return true;
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("触发配置失败: %1").arg(e.what());
+            return false;
+        }
+    }
+
+    bool setExposureUs(double exposureUs, QString& err) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!opened_) { err = QStringLiteral("相机未连接"); return false; }
+        try {
+            if (exposureUs < 10.0) exposureUs = 10.0;
+            remote_->GetFloatFeature("ExposureTime")->SetValue(exposureUs);
+            return true;
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("设置曝光失败: %1").arg(e.what());
+            return false;
+        }
+    }
+
+    bool setFrameRateHz(double hz, QString& err) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!opened_) { err = QStringLiteral("相机未连接"); return false; }
+        try {
+            if (!remote_->IsImplemented("AcquisitionFrameRate")) return true;
+            if (remote_->IsImplemented("AcquisitionFrameRateMode"))
+                remote_->GetEnumFeature("AcquisitionFrameRateMode")->SetValue("On");
+            if (hz > 0.1) remote_->GetFloatFeature("AcquisitionFrameRate")->SetValue(hz);
+            return true;
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("设置帧率失败: %1").arg(e.what());
+            return false;
+        }
+    }
+
+    bool captureOne(const QString& mode, const QString& source, cv::Mat& outMat, QString& err) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!opened_) { err = QStringLiteral("相机未连接"); return false; }
+        if (!ensureStreamUnlocked(err)) return false;
+        if (!ensureGrabUnlocked(err)) return false;
+
+        try {
+            const bool trigOn = mode.compare("On", Qt::CaseInsensitive) == 0;
+            if (trigOn && source.compare("Software", Qt::CaseInsensitive) == 0) {
+                remote_->GetCommandFeature("TriggerSoftware")->Execute();
+            }
+
+            CImageDataPointer frame = stream_->GetImage(1500);
+            if (frame->GetStatus() != GX_FRAME_STATUS_SUCCESS) {
+                err = QStringLiteral("取帧超时或失败（请检查触发源/连线）");
+                return false;
+            }
+
+            const uint64_t w = frame->GetWidth();
+            const uint64_t h = frame->GetHeight();
+            void* pData = nullptr;
+            if (frame->GetPixelFormat() == GX_PIXEL_FORMAT_MONO8) {
+                pData = frame->ConvertToRaw8(GX_BIT_0_7);
+                cv::Mat gray((int)h, (int)w, CV_8UC1, pData);
+                outMat = gray.clone();
+            } else {
+                pData = frame->ConvertToRGB24(GX_BIT_0_7, GX_RAW2RGB_NEIGHBOUR, true);
+                cv::Mat rgb((int)h, (int)w, CV_8UC3, pData);
+                cv::cvtColor(rgb, outMat, cv::COLOR_RGB2BGR);
+            }
+            return !outMat.empty();
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("采集失败: %1").arg(e.what());
+            return false;
+        } catch (const std::exception& e) {
+            err = QStringLiteral("采集异常: %1").arg(e.what());
+            return false;
+        }
+    }
+
+private:
+    bool ensureInitUnlocked(QString& err) {
+        try {
+            if (!inited_) {
+                IGXFactory::GetInstance().Init();
+                inited_ = true;
+            }
+            return true;
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("SDK初始化失败: %1").arg(e.what());
+            return false;
+        }
+    }
+
+    bool ensureStreamUnlocked(QString& err) {
+        try {
+            if (!streamOpened_) {
+                uint32_t streamCount = dev_->GetStreamCount();
+                if (streamCount == 0) {
+                    err = QStringLiteral("设备无可用数据流");
+                    return false;
+                }
+                stream_ = dev_->OpenStream(0);
+                streamOpened_ = true;
+            }
+            return true;
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("打开数据流失败: %1").arg(e.what());
+            return false;
+        }
+    }
+
+    bool ensureGrabUnlocked(QString& err) {
+        Q_UNUSED(err);
+        try {
+            if (!grabbing_) {
+                stream_->StartGrab();
+                remote_->GetCommandFeature("AcquisitionStart")->Execute();
+                grabbing_ = true;
+            }
+            return true;
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("启动采集失败: %1").arg(e.what());
+            return false;
+        }
+    }
+
+    void closeUnlocked() {
+        try {
+            if (grabbing_) {
+                remote_->GetCommandFeature("AcquisitionStop")->Execute();
+                stream_->StopGrab();
+                grabbing_ = false;
+            }
+        } catch (...) {}
+        try {
+            if (streamOpened_) {
+                stream_->Close();
+                streamOpened_ = false;
+            }
+        } catch (...) {}
+        try {
+            if (opened_) {
+                dev_->Close();
+                opened_ = false;
+            }
+        } catch (...) {}
+    }
+
+    mutable std::mutex mtx_;
+    bool inited_ = false;
+    bool opened_ = false;
+    bool streamOpened_ = false;
+    bool grabbing_ = false;
+    gxdeviceinfo_vector devices_;
+    CGXDevicePointer dev_;
+    CGXFeatureControlPointer remote_;
+    CGXFeatureControlPointer local_;
+    CGXStreamPointer stream_;
+};
+
 // XYZ 点云转为 XYZRGB（默认白色），用于导入/滤波后赋给 currentCloud_
 pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzToRgb(
     pcl::PointCloud<pcl::PointXYZ>::Ptr src)
@@ -596,6 +859,20 @@ void MainWindow::updateProStatusLabel(int projIdx, bool connected) {
 
 void MainWindow::setupProjectorManager() {
     projMgr_ = new ProjectorManager();
+    auto camSvc = std::make_shared<DahengCameraService>();
+
+    auto parseNumber = [](const QString& text, double defVal) {
+        QRegularExpression re("([-+]?\\d*\\.?\\d+)");
+        auto m = re.match(text);
+        if (!m.hasMatch()) return defVal;
+        bool ok = false;
+        double v = m.captured(1).toDouble(&ok);
+        return ok ? v : defVal;
+    };
+
+    if (ui->capComboTrigSrc->findText("Line2", Qt::MatchExactly) < 0) {
+        ui->capComboTrigSrc->addItem("Line2");
+    }
 
     auto showPatternPreview = [this](int patternIndex) {
         cv::Mat img(720, 1280, CV_8UC3, cv::Scalar(240, 240, 240));
@@ -670,6 +947,26 @@ void MainWindow::setupProjectorManager() {
                 appendCapLog(QStringLiteral("开始扫描投影仪设备..."));
                 projMgr_->scanDevices();
             });
+    connect(ui->capBtnProjScan, &QPushButton::clicked,
+            this, [this, camSvc] {
+                std::thread([this, camSvc]() {
+                    QStringList sns;
+                    QString err;
+                    bool ok = camSvc->scan(sns, err);
+                    QMetaObject::invokeMethod(this, [this, ok, sns, err]() {
+                        if (!ok) {
+                            appendCapLog(QStringLiteral("相机扫描失败: ") + err);
+                            return;
+                        }
+                        appendCapLog(QStringLiteral("相机扫描完成: 发现 %1 台").arg(sns.size()));
+                        if (!sns.isEmpty()) {
+                            appendCapLog(QStringLiteral("相机SN: ") + sns.join(", "));
+                            if (ui->capEditSN->text().trimmed().isEmpty())
+                                ui->capEditSN->setText(sns.first());
+                        }
+                    }, Qt::QueuedConnection);
+                }).detach();
+            });
     connect(ui->capBtnPro1Connect, &QPushButton::clicked,
             this, [this] {
                 ui->capBtnPro1Connect->setEnabled(false);
@@ -700,10 +997,145 @@ void MainWindow::setupProjectorManager() {
                 appendCapLog(QStringLiteral("开始连接全部投影仪..."));
                 projMgr_->connectAll();
             });
+    connect(ui->capBtnAllConnect, &QPushButton::clicked,
+            this, [this, camSvc, parseNumber] {
+                const QString snText = ui->capEditSN->text();
+                const double exposureUs = parseNumber(ui->capEditExposure->text(), 30000.0);
+                const double frameRate = parseNumber(ui->capEditFramerate->text(), 20.0);
+                const QString trigMode = ui->capComboTrigMode->currentText();
+                const QString trigSrc = ui->capComboTrigSrc->currentText();
+                std::thread([this, camSvc, snText, exposureUs, frameRate, trigMode, trigSrc]() {
+                    QString actualSn, err;
+                    bool ok = camSvc->open(snText, actualSn, err);
+                    if (ok) {
+                        camSvc->setExposureUs(exposureUs, err);
+                        camSvc->setFrameRateHz(frameRate, err);
+                        camSvc->applyTrigger(trigMode, trigSrc, err);
+                    }
+                    QMetaObject::invokeMethod(this, [this, ok, actualSn, err]() {
+                        if (ok) {
+                            ui->capEditSN->setText(actualSn);
+                            appendCapLog(QStringLiteral("相机连接成功, SN=%1").arg(actualSn));
+                        } else {
+                            appendCapLog(QStringLiteral("相机连接失败: ") + err);
+                        }
+                    }, Qt::QueuedConnection);
+                }).detach();
+            });
     connect(ui->capBtnAllDisconnect, &QPushButton::clicked,
             this, [this] {
                 appendCapLog(QStringLiteral("开始断开全部投影仪..."));
                 projMgr_->disconnectAll();
+            });
+    connect(ui->capBtnAllDisconnect, &QPushButton::clicked,
+            this, [this, camSvc] {
+                std::thread([this, camSvc]() {
+                    QString err;
+                    camSvc->close(err);
+                    QMetaObject::invokeMethod(this, [this]() {
+                        appendCapLog(QStringLiteral("相机已断开"));
+                    }, Qt::QueuedConnection);
+                }).detach();
+            });
+
+    // ---- 相机参数应用 ----
+    connect(ui->capComboTrigMode, &QComboBox::currentTextChanged,
+            this, [this, camSvc](const QString&) {
+                if (!camSvc->isOpen()) return;
+                QString err;
+                if (!camSvc->applyTrigger(ui->capComboTrigMode->currentText(), ui->capComboTrigSrc->currentText(), err))
+                    appendCapLog(QStringLiteral("触发模式设置失败: ") + err);
+            });
+    connect(ui->capComboTrigSrc, &QComboBox::currentTextChanged,
+            this, [this, camSvc](const QString&) {
+                if (!camSvc->isOpen()) return;
+                QString err;
+                if (!camSvc->applyTrigger(ui->capComboTrigMode->currentText(), ui->capComboTrigSrc->currentText(), err))
+                    appendCapLog(QStringLiteral("触发源设置失败: ") + err);
+            });
+    connect(ui->capEditExposure, &QLineEdit::editingFinished,
+            this, [this, camSvc, parseNumber] {
+                if (!camSvc->isOpen()) return;
+                QString err;
+                double us = parseNumber(ui->capEditExposure->text(), 30000.0);
+                if (!camSvc->setExposureUs(us, err))
+                    appendCapLog(QStringLiteral("曝光时间设置失败: ") + err);
+                else
+                    appendCapLog(QStringLiteral("曝光时间已设置: %1 us").arg(us, 0, 'f', 2));
+            });
+    connect(ui->capEditFramerate, &QLineEdit::editingFinished,
+            this, [this, camSvc, parseNumber] {
+                if (!camSvc->isOpen()) return;
+                QString err;
+                double hz = parseNumber(ui->capEditFramerate->text(), 20.0);
+                if (!camSvc->setFrameRateHz(hz, err))
+                    appendCapLog(QStringLiteral("采集帧率设置失败: ") + err);
+                else
+                    appendCapLog(QStringLiteral("采集帧率已设置: %1 Hz").arg(hz, 0, 'f', 2));
+            });
+
+    // ---- 相机软触发/抓图 ----
+    connect(ui->capBtnSoftTrigger, &QPushButton::clicked,
+            this, [this, camSvc, parseNumber] {
+                const QString snText = ui->capEditSN->text();
+                const double exposureUs = parseNumber(ui->capEditExposure->text(), 30000.0);
+                const double frameRate = parseNumber(ui->capEditFramerate->text(), 20.0);
+                const QString trigMode = ui->capComboTrigMode->currentText();
+                const QString trigSrc = ui->capComboTrigSrc->currentText();
+                const QString folderText = ui->capEditFolder->text();
+                std::thread([this, camSvc, snText, exposureUs, frameRate, trigMode, trigSrc, folderText]() {
+                    QString err;
+                    QString usedSn = snText;
+                    if (!camSvc->isOpen()) {
+                        QString actualSn;
+                        if (!camSvc->open(snText, actualSn, err)) {
+                            QMetaObject::invokeMethod(this, [this, err]() {
+                                appendCapLog(QStringLiteral("相机未连接且自动连接失败: ") + err);
+                            }, Qt::QueuedConnection);
+                            return;
+                        }
+                        usedSn = actualSn;
+                    }
+
+                    camSvc->setExposureUs(exposureUs, err);
+                    camSvc->setFrameRateHz(frameRate, err);
+                    if (!camSvc->applyTrigger(trigMode, trigSrc, err)) {
+                        QMetaObject::invokeMethod(this, [this, err]() {
+                            appendCapLog(QStringLiteral("触发参数应用失败: ") + err);
+                        }, Qt::QueuedConnection);
+                        return;
+                    }
+
+                    cv::Mat frame;
+                    if (!camSvc->captureOne(trigMode, trigSrc, frame, err)) {
+                        QMetaObject::invokeMethod(this, [this, err]() {
+                            appendCapLog(QStringLiteral("采集失败: ") + err);
+                        }, Qt::QueuedConnection);
+                        return;
+                    }
+
+                    QImage qimg = matToQImageCopy(frame);
+                    QString savePath;
+                    {
+                        QString folder = folderText.trimmed();
+                        if (folder.isEmpty()) folder = QDir::currentPath() + "/data/capture";
+                        QDir d(folder);
+                        if (!d.exists()) d.mkpath(".");
+                        QString sn = usedSn.trimmed();
+                        if (sn.isEmpty()) sn = QStringLiteral("UnknownSN");
+                        savePath = d.absoluteFilePath(
+                            QString("%1_%2.png").arg(sn).arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz")));
+                    }
+                    if (!qimg.isNull()) qimg.save(savePath);
+
+                    QMetaObject::invokeMethod(this, [this, qimg, savePath, usedSn]() {
+                        if (!usedSn.isEmpty()) ui->capEditSN->setText(usedSn);
+                        if (!qimg.isNull() && zoomCapShow_) {
+                            zoomCapShow_->setImage(qimg);
+                        }
+                        appendCapLog(QStringLiteral("采集成功, 图像已保存: ") + savePath);
+                    }, Qt::QueuedConnection);
+                }).detach();
             });
 
     // ---- 状态反馈信号 ----
