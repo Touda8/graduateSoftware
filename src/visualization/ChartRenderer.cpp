@@ -9,8 +9,70 @@
 #include <sstream>
 #include <iomanip>
 #include <cstdio>
+#include <QPainter>
+#include <QPen>
+#include <QFont>
+#include <QFontMetrics>
 
 namespace tp {
+
+namespace {
+double vecMean(const std::vector<double>& v) {
+    if (v.empty()) return 0.0;
+    return std::accumulate(v.begin(), v.end(), 0.0) / static_cast<double>(v.size());
+}
+
+double vecStd(const std::vector<double>& v) {
+    if (v.size() < 2) return 0.0;
+    double m = vecMean(v);
+    double s = 0.0;
+    for (double x : v) s += (x - m) * (x - m);
+    return std::sqrt(s / static_cast<double>(v.size()));
+}
+
+double niceNum(double range, bool roundFlag) {
+    if (range <= 0) return 1.0;
+    double exponent = std::floor(std::log10(range));
+    double fraction = range / std::pow(10.0, exponent);
+    double nice = 1.0;
+    if (roundFlag) {
+        if (fraction < 1.5) nice = 1;
+        else if (fraction < 3) nice = 2;
+        else if (fraction < 7) nice = 5;
+        else nice = 10;
+    } else {
+        if (fraction <= 1) nice = 1;
+        else if (fraction <= 2) nice = 2;
+        else if (fraction <= 5) nice = 5;
+        else nice = 10;
+    }
+    return nice * std::pow(10.0, exponent);
+}
+
+struct AxisTicksQt {
+    double lo = 0;
+    double hi = 1;
+    double step = 1;
+    std::vector<double> ticks;
+};
+
+AxisTicksQt calcTicks(double dmin, double dmax, int nticks = 6) {
+    AxisTicksQt ax;
+    if (dmax <= dmin) {
+        ax.lo = dmin - 1.0;
+        ax.hi = dmax + 1.0;
+        ax.step = 0.5;
+    } else {
+        double range = niceNum(dmax - dmin, false);
+        ax.step = niceNum(range / static_cast<double>(std::max(2, nticks - 1)), true);
+        ax.lo = std::floor(dmin / ax.step) * ax.step;
+        ax.hi = std::ceil(dmax / ax.step) * ax.step;
+    }
+    for (double v = ax.lo; v <= ax.hi + ax.step * 0.001; v += ax.step)
+        ax.ticks.push_back(v);
+    return ax;
+}
+} // namespace
 
 // ---------------------------------------------------------------------------
 // jetColor: map normVal in [0,1] to JET BGR
@@ -89,6 +151,26 @@ cv::Mat ChartRenderer::renderBarChart(
     const std::vector<int>& orders,
     int width, int height)
 {
+    return renderStyledBarChart(
+        heights,
+        orders,
+        "Measurement Result",
+        "Index",
+        "Value",
+        cv::Scalar(80, 175, 76),
+        width,
+        height);
+}
+
+cv::Mat ChartRenderer::renderStyledBarChart(
+    const std::vector<double>& values,
+    const std::vector<int>& xIndex,
+    const std::string& title,
+    const std::string& xLabel,
+    const std::string& yLabel,
+    const cv::Scalar& barColorBgr,
+    int width, int height)
+{
     constexpr int MARGIN_LEFT   = 70;
     constexpr int MARGIN_RIGHT  = 20;
     constexpr int MARGIN_TOP    = 40;
@@ -97,17 +179,17 @@ cv::Mat ChartRenderer::renderBarChart(
 
     cv::Mat canvas(height, width, CV_8UC3, cv::Scalar(255, 255, 255));
 
-    if (heights.empty()) {
+    if (values.empty()) {
         return canvas;
     }
 
     const int plotW = width  - MARGIN_LEFT - MARGIN_RIGHT;
     const int plotH = height - MARGIN_TOP  - MARGIN_BOTTOM;
-    const int n     = static_cast<int>(heights.size());
+    const int n     = static_cast<int>(values.size());
 
     // Y-axis range
-    double minH = *std::min_element(heights.begin(), heights.end());
-    double maxH = *std::max_element(heights.begin(), heights.end());
+    double minH = *std::min_element(values.begin(), values.end());
+    double maxH = *std::max_element(values.begin(), values.end());
     if (std::abs(maxH - minH) < 1e-9) {
         minH -= 0.5;
         maxH += 0.5;
@@ -119,7 +201,7 @@ cv::Mat ChartRenderer::renderBarChart(
     double yRange  = yMax - yMin;
 
     // Mean height
-    double meanH = std::accumulate(heights.begin(), heights.end(), 0.0)
+    double meanH = std::accumulate(values.begin(), values.end(), 0.0)
                    / static_cast<double>(n);
 
     // Lambda: value -> pixel Y
@@ -161,21 +243,18 @@ cv::Mat ChartRenderer::renderBarChart(
     double barW     = std::max(barSlotW * 0.7, 1.0);
 
     for (int i = 0; i < n; ++i) {
-        double normVal = (heights[i] - minH) / rangeH;
-        cv::Scalar color = jetColor(normVal);
-
         int cx = MARGIN_LEFT + static_cast<int>(barSlotW * (i + 0.5));
         int barHalf = static_cast<int>(barW / 2.0);
         int x1 = cx - barHalf;
         int x2 = cx + barHalf;
-        int yTop = valToY(heights[i]);
+        int yTop = valToY(values[i]);
         int yBot = valToY(yMin);
 
         // Filled bar
         cv::rectangle(canvas,
                       cv::Point(x1, yTop),
                       cv::Point(x2, yBot),
-                      color, cv::FILLED);
+                      barColorBgr, cv::FILLED);
         // 1px black border
         cv::rectangle(canvas,
                       cv::Point(x1, yTop),
@@ -183,7 +262,7 @@ cv::Mat ChartRenderer::renderBarChart(
                       cv::Scalar(0, 0, 0), 1);
 
         // X-axis label (order number)
-        int ordIdx = (i < static_cast<int>(orders.size())) ? orders[i] : i + 1;
+        int ordIdx = (i < static_cast<int>(xIndex.size())) ? xIndex[i] : i + 1;
         std::string label = std::to_string(ordIdx);
 
         if (n <= 30) {
@@ -225,7 +304,6 @@ cv::Mat ChartRenderer::renderBarChart(
     // --- Title ---
     {
         int baseline = 0;
-        std::string title = "Ball Height (mm)";
         cv::Size textSz = cv::getTextSize(title,
                                            cv::FONT_HERSHEY_SIMPLEX,
                                            0.55, 1, &baseline);
@@ -234,6 +312,17 @@ cv::Mat ChartRenderer::renderBarChart(
                     cv::Point(tx, 25),
                     cv::FONT_HERSHEY_SIMPLEX, 0.55,
                     cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+
+        int yBaseline = 0;
+        cv::Size xLabelSz = cv::getTextSize(xLabel,
+            cv::FONT_HERSHEY_SIMPLEX, 0.4, 1, &yBaseline);
+        cv::putText(canvas, xLabel,
+            cv::Point((width - xLabelSz.width) / 2, height - 8),
+            cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(60, 60, 60), 1, cv::LINE_AA);
+
+        cv::putText(canvas, yLabel,
+            cv::Point(6, 18),
+            cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(60, 60, 60), 1, cv::LINE_AA);
     }
 
     return canvas;
@@ -598,7 +687,7 @@ cv::Mat ChartRenderer::renderCoplanarityLineChart(
     }
 
     // Title
-    cv::putText(canvas, "BGA Coplanarity Repeated Measurement",
+    cv::putText(canvas, "BGA Coplanarity 10x Measurement",
                 {marginL + 10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.50, black, 1, cv::LINE_AA);
 
     // Stats box
@@ -610,6 +699,214 @@ cv::Mat ChartRenderer::renderCoplanarityLineChart(
     }
 
     return canvas;
+}
+
+QImage ChartRenderer::renderBarChartQt(
+    const std::vector<double>& data,
+    const std::vector<int>& xIndex,
+    const QString& title,
+    const QString& xLabel,
+    const QString& yLabel,
+    const QColor& barColor,
+    int width,
+    int height)
+{
+    QImage image(width, height, QImage::Format_RGB888);
+    image.fill(Qt::white);
+    if (data.empty()) return image;
+
+    constexpr int ml = 80, mr = 30, mt = 50, mb = 55;
+    const QRectF pa(ml, mt, width - ml - mr, height - mt - mb);
+
+    const double mn = vecMean(data);
+    const auto [vminIt, vmaxIt] = std::minmax_element(data.begin(), data.end());
+    double margin = (*vmaxIt - *vminIt) * 0.3;
+    if (margin < 1e-6) margin = std::max(std::abs(*vmaxIt) * 0.15, 0.001);
+    AxisTicksQt yax = calcTicks(std::max(0.0, *vminIt - margin), *vmaxIt + margin, 6);
+
+    auto mapX = [&](double v, double xlo, double xhi) {
+        return pa.x() + (v - xlo) / (xhi - xlo) * pa.width();
+    };
+    auto mapY = [&](double v, double ylo, double yhi) {
+        return pa.y() + pa.height() - (v - ylo) / (yhi - ylo) * pa.height();
+    };
+
+    const double xlo = 0.3;
+    const double xhi = static_cast<double>(data.size()) + 0.7;
+
+    QPainter p(&image);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::TextAntialiasing, true);
+
+    QFont titleFont("Microsoft YaHei", 13, QFont::Bold);
+    QFont labelFont("Microsoft YaHei", 10);
+    QFont tickFont("Arial", 9);
+
+    // Title
+    p.setPen(Qt::black);
+    p.setFont(titleFont);
+    p.drawText(QRectF(0, 5, width, mt), Qt::AlignCenter, title);
+
+    // Grid + y labels
+    QPen gridPen(QColor(0, 0, 0, 40), 1, Qt::DotLine);
+    p.setFont(tickFont);
+    for (double yv : yax.ticks) {
+        double y = mapY(yv, yax.lo, yax.hi);
+        p.setPen(gridPen);
+        p.drawLine(QPointF(pa.left(), y), QPointF(pa.right(), y));
+        p.setPen(QColor(60, 60, 60));
+        QString ys = (std::abs(yv) < 1.0) ? QString::number(yv, 'f', 4)
+                                          : QString::number(yv, 'f', 2);
+        p.drawText(QRectF(0, y - 10, ml - 6, 20), Qt::AlignRight | Qt::AlignVCenter, ys);
+    }
+
+    // Border
+    p.setPen(QPen(QColor(100, 100, 100), 1));
+    p.drawRect(pa);
+
+    // x ticks + bars
+    const double barW = std::min(pa.width() / (data.size() + 1.0) * 0.55, 14.0);
+    for (int i = 0; i < static_cast<int>(data.size()); ++i) {
+        const double cx = mapX(i + 1, xlo, xhi);
+        const double top = mapY(data[i], yax.lo, yax.hi);
+        const double bot = mapY(yax.lo, yax.lo, yax.hi);
+        p.fillRect(QRectF(cx - barW / 2.0, top, barW, bot - top), barColor);
+        int xi = (i < static_cast<int>(xIndex.size())) ? xIndex[i] : i + 1;
+        p.setPen(QColor(60, 60, 60));
+        p.drawText(QRectF(cx - 15, pa.bottom() + 3, 30, 20), Qt::AlignCenter, QString::number(xi));
+    }
+
+    // mean line
+    const double my = mapY(mn, yax.lo, yax.hi);
+    p.setPen(QPen(QColor(220, 30, 30), 1.5, Qt::DashLine));
+    p.drawLine(QPointF(pa.left(), my), QPointF(pa.right(), my));
+    p.setPen(QColor(220, 30, 30));
+    p.setFont(QFont("Arial", 8));
+    p.drawText(QPointF(pa.right() - 120, my - 6), QString("mean=%1mm").arg(mn, 0, 'f', 4));
+
+    // axis labels
+    p.setPen(Qt::black);
+    p.setFont(labelFont);
+    p.drawText(QRectF(0, height - 22, width, 20), Qt::AlignCenter, xLabel);
+    p.save();
+    p.translate(14, mt + (height - mt - mb) / 2.0);
+    p.rotate(-90);
+    p.drawText(QRectF(-100, -10, 200, 20), Qt::AlignCenter, yLabel);
+    p.restore();
+
+    return image;
+}
+
+QImage ChartRenderer::renderLineChartQt(
+    const std::vector<double>& data,
+    const QString& title,
+    const QString& xLabel,
+    const QString& yLabel,
+    int width,
+    int height)
+{
+    QImage image(width, height, QImage::Format_RGB888);
+    image.fill(Qt::white);
+    if (data.empty()) return image;
+
+    constexpr int ml = 80, mr = 30, mt = 50, mb = 55;
+    const QRectF pa(ml, mt, width - ml - mr, height - mt - mb);
+
+    const double mn = vecMean(data);
+    const double sd = vecStd(data);
+    const auto [vminIt, vmaxIt] = std::minmax_element(data.begin(), data.end());
+    AxisTicksQt yax = calcTicks(*vminIt - 0.005, *vmaxIt + 0.005, 6);
+
+    const double xlo = 0.3;
+    const double xhi = static_cast<double>(data.size()) + 0.7;
+    auto mapX = [&](double v) {
+        return pa.x() + (v - xlo) / (xhi - xlo) * pa.width();
+    };
+    auto mapY = [&](double v) {
+        return pa.y() + pa.height() - (v - yax.lo) / (yax.hi - yax.lo) * pa.height();
+    };
+
+    QPainter p(&image);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::TextAntialiasing, true);
+
+    QFont titleFont("Microsoft YaHei", 13, QFont::Bold);
+    QFont labelFont("Microsoft YaHei", 10);
+    QFont tickFont("Arial", 9);
+
+    p.setPen(Qt::black);
+    p.setFont(titleFont);
+    p.drawText(QRectF(0, 5, width, mt), Qt::AlignCenter, title);
+
+    // grid
+    p.setFont(tickFont);
+    QPen gridPen(QColor(0, 0, 0, 40), 1, Qt::DotLine);
+    for (double yv : yax.ticks) {
+        double y = mapY(yv);
+        p.setPen(gridPen);
+        p.drawLine(QPointF(pa.left(), y), QPointF(pa.right(), y));
+        p.setPen(QColor(60, 60, 60));
+        p.drawText(QRectF(0, y - 10, ml - 6, 20), Qt::AlignRight | Qt::AlignVCenter,
+            QString::number(yv, std::abs(yv) < 1.0 ? 'f' : 'f', std::abs(yv) < 1.0 ? 4 : 2));
+    }
+
+    p.setPen(QPen(QColor(100, 100, 100), 1));
+    p.drawRect(pa);
+
+    // sigma band
+    const double yTop = std::max(pa.top(), mapY(mn + sd));
+    const double yBot = std::min(pa.bottom(), mapY(mn - sd));
+    p.fillRect(QRectF(pa.left(), yTop, pa.width(), yBot - yTop), QColor(220, 30, 30, 30));
+
+    // mean line
+    p.setPen(QPen(QColor(220, 30, 30), 1.5, Qt::DashLine));
+    const double yMean = mapY(mn);
+    p.drawLine(QPointF(pa.left(), yMean), QPointF(pa.right(), yMean));
+
+    // line + points
+    p.setPen(QPen(QColor(51, 102, 204), 2.0));
+    for (int i = 0; i < static_cast<int>(data.size()) - 1; ++i)
+        p.drawLine(QPointF(mapX(i + 1), mapY(data[i])), QPointF(mapX(i + 2), mapY(data[i + 1])));
+    p.setBrush(QColor(51, 102, 204));
+    p.setPen(Qt::NoPen);
+    for (int i = 0; i < static_cast<int>(data.size()); ++i)
+        p.drawEllipse(QPointF(mapX(i + 1), mapY(data[i])), 4, 4);
+
+    // legend
+    QRectF lr(pa.right() - 175, pa.top() + 8, 170, 50);
+    p.setPen(QPen(QColor(180, 180, 180), 1));
+    p.setBrush(QColor(255, 255, 255, 240));
+    p.drawRect(lr);
+    p.setPen(Qt::black);
+    p.setFont(QFont("Arial", 8));
+    p.setBrush(QColor(51, 102, 204));
+    p.drawEllipse(QPointF(lr.left() + 12, lr.top() + 12), 4, 4);
+    p.drawText(QPointF(lr.left() + 20, lr.top() + 15), QStringLiteral("coplanarity"));
+    p.setPen(QPen(QColor(220, 30, 30), 1.2, Qt::DashLine));
+    p.drawLine(QPointF(lr.left() + 5, lr.top() + 26), QPointF(lr.left() + 18, lr.top() + 26));
+    p.setPen(QColor(220, 30, 30));
+    p.drawText(QPointF(lr.left() + 20, lr.top() + 29), QString("mean=%1mm").arg(mn, 0, 'f', 4));
+    p.fillRect(QRectF(lr.left() + 5, lr.top() + 37, 13, 8), QColor(220, 30, 30, 80));
+    p.drawText(QPointF(lr.left() + 20, lr.top() + 44), QString("±σ (%1mm)").arg(sd, 0, 'f', 4));
+
+    // x ticks
+    p.setPen(QColor(60, 60, 60));
+    for (int i = 1; i <= static_cast<int>(data.size()); ++i) {
+        double x = mapX(i);
+        p.drawText(QRectF(x - 15, pa.bottom() + 3, 30, 20), Qt::AlignCenter, QString::number(i));
+    }
+
+    // axis labels
+    p.setPen(Qt::black);
+    p.setFont(labelFont);
+    p.drawText(QRectF(0, height - 22, width, 20), Qt::AlignCenter, xLabel);
+    p.save();
+    p.translate(14, mt + (height - mt - mb) / 2.0);
+    p.rotate(-90);
+    p.drawText(QRectF(-100, -10, 200, 20), Qt::AlignCenter, yLabel);
+    p.restore();
+
+    return image;
 }
 
 } // namespace tp

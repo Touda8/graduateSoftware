@@ -201,6 +201,12 @@ private:
     tp::ZoomableImageWidget* zoomBgaBall_ = nullptr;
     tp::ZoomableImageWidget* zoomResPhase1_ = nullptr;
     tp::ZoomableImageWidget* zoomResPhase2_ = nullptr;
+    tp::ZoomableImageWidget* zoomCapShow_ = nullptr;
+    tp::ZoomableImageWidget* zoomQfpSeg_ = nullptr;
+    tp::ZoomableImageWidget* zoomQfpCoplanar_ = nullptr;
+    tp::ZoomableImageWidget* zoomQfpMaxWarpAngle_ = nullptr;
+    tp::ZoomableImageWidget* zoomQfpAvgWarpAngle_ = nullptr;
+    tp::ZoomableImageWidget* zoomQfpWarpHeight_ = nullptr;
 
     // BGA results
     std::vector<tp::BallResult> lastBgaResults_;
@@ -208,4 +214,11 @@ private:
     Eigen::Vector3d lastSubstrateNormal_{0, 0, -1};
     double lastSubstrateD_ = 0;
     int lastBgaNumRows_ = 0;
+
+    // QFP chart cache
+    std::vector<double> qfpCoplanaritySeries_;
+    std::vector<double> qfpMaxWarpAngleSeries_;
+    std::vector<double> qfpAvgWarpAngleSeries_;
+    std::vector<double> qfpMaxWarpHeightSeries_;
+    cv::Mat lastQfpSegImage_;
 };

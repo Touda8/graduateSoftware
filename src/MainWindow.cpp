@@ -114,13 +114,7 @@ MainWindow::MainWindow(QWidget* parent)
         auto* newWidget = new tp::ZoomableImageWidget(parent);
 
         if (parentLayout) {
-            int idx = parentLayout->indexOf(label);
-            if (idx >= 0) {
-                parentLayout->removeWidget(label);
-                if (auto* box = qobject_cast<QBoxLayout*>(parentLayout))
-                    box->insertWidget(idx, newWidget);
-                else
-                    parentLayout->addWidget(newWidget);
+            if (parentLayout->replaceWidget(label, newWidget)) {
                 label->hide();
                 outWidget = newWidget;
                 return true;
@@ -140,13 +134,25 @@ MainWindow::MainWindow(QWidget* parent)
     replaceLabel(ui->bgaBallLabel,   zoomBgaBall_);
     replaceLabel(ui->resPhaseLabel1, zoomResPhase1_);
     replaceLabel(ui->resPhaseLabel2, zoomResPhase2_);
+    replaceLabel(ui->capShowLabel,   zoomCapShow_);
+    replaceLabel(ui->qfpSegLabel,    zoomQfpSeg_);
+    replaceLabel(ui->qfpCoplanarLabel, zoomQfpCoplanar_);
+    replaceLabel(ui->qfpMaxWarpAngleLabel, zoomQfpMaxWarpAngle_);
+    replaceLabel(ui->qfpAvgWarpAngleLabel, zoomQfpAvgWarpAngle_);
+    replaceLabel(ui->qfpWarpHeightLabel, zoomQfpWarpHeight_);
 
     tp::Logger::instance().info(
         std::string("Zoomable widgets init: bgaBar=") + (zoomBgaBar_ ? "ok" : "null") +
         ", bgaLine=" + (zoomBgaLine_ ? std::string("ok") : std::string("null")) +
         ", bgaBall=" + (zoomBgaBall_ ? std::string("ok") : std::string("null")) +
         ", resP1=" + (zoomResPhase1_ ? std::string("ok") : std::string("null")) +
-        ", resP2=" + (zoomResPhase2_ ? std::string("ok") : std::string("null")));
+        ", resP2=" + (zoomResPhase2_ ? std::string("ok") : std::string("null")) +
+        ", cap=" + (zoomCapShow_ ? std::string("ok") : std::string("null")) +
+        ", qfpSeg=" + (zoomQfpSeg_ ? std::string("ok") : std::string("null")) +
+        ", qfpC=" + (zoomQfpCoplanar_ ? std::string("ok") : std::string("null")) +
+        ", qfpMaxA=" + (zoomQfpMaxWarpAngle_ ? std::string("ok") : std::string("null")) +
+        ", qfpAvgA=" + (zoomQfpAvgWarpAngle_ ? std::string("ok") : std::string("null")) +
+        ", qfpMaxH=" + (zoomQfpWarpHeight_ ? std::string("ok") : std::string("null")));
 
     initVtkWidget();
     setupConnections();
@@ -522,6 +528,72 @@ void MainWindow::updateProStatusLabel(int projIdx, bool connected) {
 void MainWindow::setupProjectorManager() {
     projMgr_ = new ProjectorManager();
 
+    auto showPatternPreview = [this](int patternIndex) {
+        cv::Mat img(720, 1280, CV_8UC3, cv::Scalar(240, 240, 240));
+        const cv::Scalar black(20, 20, 20);
+        switch (patternIndex) {
+        case 0: // white
+            img.setTo(cv::Scalar(255, 255, 255));
+            break;
+        case 1: // black
+            img.setTo(cv::Scalar(0, 0, 0));
+            break;
+        case 2: // color bars
+            for (int i = 0; i < 8; ++i) {
+                cv::Scalar c;
+                switch (i) {
+                case 0: c = cv::Scalar(0, 0, 255); break;
+                case 1: c = cv::Scalar(0, 165, 255); break;
+                case 2: c = cv::Scalar(0, 255, 255); break;
+                case 3: c = cv::Scalar(0, 255, 0); break;
+                case 4: c = cv::Scalar(255, 255, 0); break;
+                case 5: c = cv::Scalar(255, 0, 0); break;
+                case 6: c = cv::Scalar(255, 0, 255); break;
+                default: c = cv::Scalar(255, 255, 255); break;
+                }
+                int x0 = i * img.cols / 8;
+                int x1 = (i + 1) * img.cols / 8;
+                cv::rectangle(img, cv::Rect(x0, 0, x1 - x0, img.rows), c, cv::FILLED);
+            }
+            break;
+        case 3: // horizontal lines
+            img.setTo(cv::Scalar(255, 255, 255));
+            for (int y = 0; y < img.rows; y += 24)
+                cv::line(img, cv::Point(0, y), cv::Point(img.cols - 1, y), black, 2);
+            break;
+        case 4: // vertical lines
+            img.setTo(cv::Scalar(255, 255, 255));
+            for (int x = 0; x < img.cols; x += 24)
+                cv::line(img, cv::Point(x, 0), cv::Point(x, img.rows - 1), black, 2);
+            break;
+        case 5: // grid
+            img.setTo(cv::Scalar(255, 255, 255));
+            for (int y = 0; y < img.rows; y += 30)
+                cv::line(img, cv::Point(0, y), cv::Point(img.cols - 1, y), black, 1);
+            for (int x = 0; x < img.cols; x += 30)
+                cv::line(img, cv::Point(x, 0), cv::Point(x, img.rows - 1), black, 1);
+            break;
+        case 6: // checker
+            for (int y = 0; y < img.rows; y += 40)
+                for (int x = 0; x < img.cols; x += 40) {
+                    bool white = ((x / 40) + (y / 40)) % 2 == 0;
+                    cv::rectangle(img, cv::Rect(x, y, 40, 40),
+                        white ? cv::Scalar(255, 255, 255) : cv::Scalar(30, 30, 30), cv::FILLED);
+                }
+            break;
+        default:
+            break;
+        }
+
+        cv::putText(img, "Pattern Preview", cv::Point(20, 40),
+            cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(60, 60, 60), 2, cv::LINE_AA);
+        QImage qimg = matToQImageCopy(img);
+        if (!qimg.isNull() && zoomCapShow_) {
+            zoomCapShow_->setImage(qimg);
+            appendCapLog(QStringLiteral("预览已更新: 测试图案 %1").arg(patternIndex));
+        }
+    };
+
     // ---- 连接管理按钮（带禁用防重复点击） ----
     connect(ui->capBtnProjScan, &QPushButton::clicked,
             this, [this] {
@@ -598,7 +670,7 @@ void MainWindow::setupProjectorManager() {
             }, Qt::QueuedConnection);
 
     // ---- 测试图案按钮 ----
-    connect(ui->capBtnProjShowTest, &QPushButton::clicked, this, [this] {
+    connect(ui->capBtnProjShowTest, &QPushButton::clicked, this, [this, showPatternPreview] {
         bool pro1 = ui->capCheckPro1Test->isChecked();
         bool pro2 = ui->capCheckPro2Test->isChecked();
         if (!pro1 && !pro2) {
@@ -624,6 +696,7 @@ void MainWindow::setupProjectorManager() {
                 projMgr_->showTestPattern(1, patCode, colCode);
             }
         }
+        showPatternPreview(pat);
     });
     connect(ui->capBtnProjStopTest, &QPushButton::clicked, this, [this] {
         bool pro1 = ui->capCheckPro1Test->isChecked();
@@ -638,24 +711,27 @@ void MainWindow::setupProjectorManager() {
         if (pro2) {
             projMgr_->stopTestPattern(1);
         }
+        if (zoomCapShow_) zoomCapShow_->clearImage();
     });
 
     // ---- Pro1/Pro2 投射按钮（条纹投射） ----
-    connect(ui->capBtnPro1Trig, &QPushButton::clicked, this, [this] {
+    connect(ui->capBtnPro1Trig, &QPushButton::clicked, this, [this, showPatternPreview] {
         if (!projMgr_->isConnected(0)) {
             appendCapLog(QStringLiteral("错误: Pro1 未连接，请先扫描并连接设备"));
             return;
         }
         appendCapLog(QStringLiteral("Pro1 开始条纹投射..."));
         projMgr_->startPatternSequence(0, true);
+        showPatternPreview(ui->capComboProjPattern->currentIndex());
     });
-    connect(ui->capBtnPro2Trig, &QPushButton::clicked, this, [this] {
+    connect(ui->capBtnPro2Trig, &QPushButton::clicked, this, [this, showPatternPreview] {
         if (!projMgr_->isConnected(1)) {
             appendCapLog(QStringLiteral("错误: Pro2 未连接，请先扫描并连接设备"));
             return;
         }
         appendCapLog(QStringLiteral("Pro2 开始条纹投射..."));
         projMgr_->startPatternSequence(1, true);
+        showPatternPreview(ui->capComboProjPattern->currentIndex());
     });
 
     // ---- 连续采集按钮（双投影仪循环投射切换） ----
@@ -1752,35 +1828,22 @@ void MainWindow::onBgaBtnStartClicked() {
                     .arg(b.z3d, 0, 'f', 3);
             }
 
-            // Generate charts
-            std::vector<double> heights;
-            std::vector<int> orders;
-            for (const auto& b : lastResults) {
-                if (!b.success) continue;
-                heights.push_back(b.height);
-                orders.push_back(b.order);
-            }
+            // Generate charts (picsrc style)
+            std::vector<int> measIndex(coplanarities.size());
+            for (int i = 0; i < static_cast<int>(coplanarities.size()); ++i)
+                measIndex[i] = i + 1;
 
-            // 生成图表（在工作线程中仅做 cv::Mat 渲染，不创建 QPixmap）
-            cv::Mat barChartImg, lineChartImg, ballOverlayImg;
-            if (!heights.empty()) {
-                barChartImg = tp::ChartRenderer::renderBarChart(heights, orders);
-            }
-            // 共面度 n 次重复测量折线图
-            if (!coplanarities.empty()) {
-                lineChartImg = tp::ChartRenderer::renderCoplanarityLineChart(coplanarities);
-            }
+            // 仅在工作线程做数据处理；Qt图表绘制放到UI线程，避免线程相关崩溃
+            cv::Mat ballOverlayImg;
             if (!lastImage.empty() && !lastResults.empty()) {
                 ballOverlayImg = tp::ChartRenderer::renderBallOverlay(lastImage, lastResults);
             }
 
             // 在工作线程中提前做深拷贝QImage，避免UI线程拿到悬空Mat数据
-            QImage barQImg = matToQImageCopy(barChartImg);
-            QImage lineQImg = matToQImageCopy(lineChartImg);
             QImage ballQImg = matToQImageCopy(ballOverlayImg);
 
             QMetaObject::invokeMethod(this, [this, resultText, coplanarities,
-                    barQImg, lineQImg, ballQImg, lastResults, lastImage,
+                    ballQImg, lastResults, lastImage,
                     lastNormal, lastD, lastNumRows]() {
                 bgaCoplanarities_ = coplanarities;
                 lastBgaResults_ = lastResults;
@@ -1801,24 +1864,37 @@ void MainWindow::onBgaBtnStartClicked() {
                         .arg(ballQImg.width()).arg(ballQImg.height()));
                 }
 
-                if (barQImg.isNull()) {
-                    appendBgaLog(QStringLiteral("BGA图像为空: 柱状图未生成"));
-                } else if (!zoomBgaBar_) {
-                    appendBgaLog(QStringLiteral("BGA图像更新失败: 柱状图控件为空"));
-                } else {
-                    zoomBgaBar_->setImage(barQImg);
-                    appendBgaLog(QStringLiteral("BGA图像更新: 柱状图 %1x%2")
-                        .arg(barQImg.width()).arg(barQImg.height()));
-                }
+                // 在UI线程生成图表，避免工作线程中调用Qt绘图导致崩溃
+                if (!bgaCoplanarities_.empty()) {
+                    std::vector<int> xIndex(bgaCoplanarities_.size());
+                    for (int i = 0; i < static_cast<int>(bgaCoplanarities_.size()); ++i)
+                        xIndex[i] = i + 1;
 
-                if (lineQImg.isNull()) {
-                    appendBgaLog(QStringLiteral("BGA图像为空: 折线图未生成"));
-                } else if (!zoomBgaLine_) {
-                    appendBgaLog(QStringLiteral("BGA图像更新失败: 折线图控件为空"));
-                } else {
-                    zoomBgaLine_->setImage(lineQImg);
-                    appendBgaLog(QStringLiteral("BGA图像更新: 折线图 %1x%2")
-                        .arg(lineQImg.width()).arg(lineQImg.height()));
+                    cv::Mat barMat = tp::ChartRenderer::renderStyledBarChart(
+                        bgaCoplanarities_, xIndex,
+                        "BGA Coplanarity",
+                        "Measure Index",
+                        "Coplanarity/mm",
+                        cv::Scalar(80, 175, 76));
+                    cv::Mat lineMat = tp::ChartRenderer::renderCoplanarityLineChart(bgaCoplanarities_);
+                    QImage barQImg = matToQImageCopy(barMat);
+                    QImage lineQImg = matToQImageCopy(lineMat);
+
+                    if (!barQImg.isNull() && zoomBgaBar_) {
+                        zoomBgaBar_->setImage(barQImg);
+                        appendBgaLog(QStringLiteral("BGA图像更新: 柱状图 %1x%2")
+                            .arg(barQImg.width()).arg(barQImg.height()));
+                    } else {
+                        appendBgaLog(QStringLiteral("BGA图像更新失败: 柱状图生成失败或控件为空"));
+                    }
+
+                    if (!lineQImg.isNull() && zoomBgaLine_) {
+                        zoomBgaLine_->setImage(lineQImg);
+                        appendBgaLog(QStringLiteral("BGA图像更新: 折线图 %1x%2")
+                            .arg(lineQImg.width()).arg(lineQImg.height()));
+                    } else {
+                        appendBgaLog(QStringLiteral("BGA图像更新失败: 折线图生成失败或控件为空"));
+                    }
                 }
 
                 ui->bgaBtnStart->setEnabled(true);
@@ -1844,21 +1920,22 @@ void MainWindow::onBgaBtnPlotClicked() {
         return;
     }
     // 重新生成图表并显示
-    std::vector<double> heights;
-    std::vector<int> orders;
-    for (const auto& b : lastBgaResults_) {
-        if (!b.success) continue;
-        heights.push_back(b.height);
-        orders.push_back(b.order);
-    }
-    if (!heights.empty()) {
-        auto barImg = tp::ChartRenderer::renderBarChart(heights, orders);
-        auto qimg = matToQImageCopy(barImg);
-        if (!qimg.isNull() && zoomBgaBar_) {
-            zoomBgaBar_->setImage(qimg);
+    if (!bgaCoplanarities_.empty()) {
+        std::vector<int> measIndex(bgaCoplanarities_.size());
+        for (int i = 0; i < static_cast<int>(bgaCoplanarities_.size()); ++i)
+            measIndex[i] = i + 1;
+        auto barImg = tp::ChartRenderer::renderStyledBarChart(
+            bgaCoplanarities_, measIndex,
+            "BGA Coplanarity",
+            "Measure Index",
+            "Coplanarity/mm",
+            cv::Scalar(80, 175, 76));
+        auto barQImg = matToQImageCopy(barImg);
+        if (!barQImg.isNull() && zoomBgaBar_) {
+            zoomBgaBar_->setImage(barQImg);
             appendBgaLog(QStringLiteral("BGA图像更新: 柱状图 %1x%2")
-                .arg(qimg.width()).arg(qimg.height()));
-        } else if (qimg.isNull()) {
+                .arg(barQImg.width()).arg(barQImg.height()));
+        } else if (barQImg.isNull()) {
             appendBgaLog(QStringLiteral("BGA图像为空: 柱状图重绘失败"));
         } else if (!zoomBgaBar_) {
             appendBgaLog(QStringLiteral("BGA图像更新失败: 柱状图控件为空"));
@@ -1866,12 +1943,12 @@ void MainWindow::onBgaBtnPlotClicked() {
     }
     if (!bgaCoplanarities_.empty()) {
         auto lineImg = tp::ChartRenderer::renderCoplanarityLineChart(bgaCoplanarities_);
-        auto qimg = matToQImageCopy(lineImg);
-        if (!qimg.isNull() && zoomBgaLine_) {
-            zoomBgaLine_->setImage(qimg);
+        auto lineQImg = matToQImageCopy(lineImg);
+        if (!lineQImg.isNull() && zoomBgaLine_) {
+            zoomBgaLine_->setImage(lineQImg);
             appendBgaLog(QStringLiteral("BGA图像更新: 折线图 %1x%2")
-                .arg(qimg.width()).arg(qimg.height()));
-        } else if (qimg.isNull()) {
+                .arg(lineQImg.width()).arg(lineQImg.height()));
+        } else if (lineQImg.isNull()) {
             appendBgaLog(QStringLiteral("BGA图像为空: 折线图重绘失败"));
         } else if (!zoomBgaLine_) {
             appendBgaLog(QStringLiteral("BGA图像更新失败: 折线图控件为空"));
@@ -1965,6 +2042,10 @@ void MainWindow::onQfpBtnStartClicked() {
             tp::BGAMeasurePipeline pipeline;
             QString resultText;
             cv::Mat lastSegImg;
+            std::vector<double> copSeries;
+            std::vector<double> maxWarpSeries;
+            std::vector<double> avgWarpSeries;
+            std::vector<double> maxHeightSeries;
 
             for (int i = 1; i <= count; ++i) {
                 emit qfpLogMessage(QStringLiteral("处理第 %1/%2 次...")
@@ -1990,25 +2071,85 @@ void MainWindow::onQfpBtnStartClicked() {
                 resultText += QStringLiteral("测量 %1: 引脚数 = %2\n")
                     .arg(i).arg(pins.size());
 
+                // QFP图表指标（当前以分割统计值作为测量显示）
+                double maxArea = 0.0;
+                double sumArea = 0.0;
+                double maxHeight = 0.0;
+                for (const auto& pin : pins) {
+                    maxArea = std::max(maxArea, pin.area);
+                    sumArea += pin.area;
+                    maxHeight = std::max(maxHeight, static_cast<double>(pin.bbox.height));
+                }
+                double avgArea = pins.empty() ? 0.0 : (sumArea / pins.size());
+                copSeries.push_back(static_cast<double>(pins.size()));
+                maxWarpSeries.push_back(maxArea);
+                avgWarpSeries.push_back(avgArea);
+                maxHeightSeries.push_back(maxHeight);
+
                 cv::Mat segShow;
-                cv::cvtColor(gray, segShow, cv::COLOR_GRAY2RGB);
+                cv::cvtColor(gray, segShow, cv::COLOR_GRAY2BGR);
                 for (const auto& pin : pins) {
                     cv::rectangle(segShow, pin.bbox, cv::Scalar(0, 255, 0), 1);
                 }
                 lastSegImg = segShow.clone();
             }
 
-            QImage segQImg;
-            if (!lastSegImg.empty()) {
-                segQImg = QImage(lastSegImg.data, lastSegImg.cols, lastSegImg.rows,
-                    static_cast<int>(lastSegImg.step), QImage::Format_RGB888).copy();
-            }
+            std::vector<int> xIndex(copSeries.size());
+            for (int i = 0; i < static_cast<int>(copSeries.size()); ++i) xIndex[i] = i + 1;
 
-            QMetaObject::invokeMethod(this, [this, resultText, segQImg]() {
+            QImage segQImg = matToQImageCopy(lastSegImg);
+
+            QMetaObject::invokeMethod(this, [this, resultText, segQImg,
+                                             copSeries, maxWarpSeries, avgWarpSeries, maxHeightSeries,
+                                             lastSegImg]() {
                 ui->qfpDataText->setPlainText(resultText);
-                if (!segQImg.isNull())
-                    ui->qfpSegLabel->setPixmap(QPixmap::fromImage(segQImg).scaled(
-                        ui->qfpSegLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                qfpCoplanaritySeries_ = copSeries;
+                qfpMaxWarpAngleSeries_ = maxWarpSeries;
+                qfpAvgWarpAngleSeries_ = avgWarpSeries;
+                qfpMaxWarpHeightSeries_ = maxHeightSeries;
+                lastQfpSegImage_ = lastSegImg;
+
+                if (!segQImg.isNull() && zoomQfpSeg_)
+                    zoomQfpSeg_->setImage(segQImg);
+
+                // 在UI线程生成QFP图表
+                if (!qfpCoplanaritySeries_.empty()) {
+                    std::vector<int> xIndex(qfpCoplanaritySeries_.size());
+                    for (int i = 0; i < static_cast<int>(qfpCoplanaritySeries_.size()); ++i)
+                        xIndex[i] = i + 1;
+
+                    cv::Mat copMat = tp::ChartRenderer::renderStyledBarChart(
+                        qfpCoplanaritySeries_, xIndex,
+                        "QFP Coplanarity", "Measure Index", "Pins",
+                        cv::Scalar(243, 150, 33));
+                    cv::Mat maxWarpMat = tp::ChartRenderer::renderStyledBarChart(
+                        qfpMaxWarpAngleSeries_, xIndex,
+                        "QFP Max Warp", "Measure Index", "Max Area(px)",
+                        cv::Scalar(176, 39, 156));
+                    cv::Mat avgWarpMat = tp::ChartRenderer::renderStyledBarChart(
+                        qfpAvgWarpAngleSeries_, xIndex,
+                        "QFP Avg Warp", "Measure Index", "Avg Area(px)",
+                        cv::Scalar(55, 186, 0));
+                    cv::Mat maxHeightMat = tp::ChartRenderer::renderStyledBarChart(
+                        qfpMaxWarpHeightSeries_, xIndex,
+                        "QFP Max Height", "Measure Index", "Height(px)",
+                        cv::Scalar(99, 30, 233));
+
+                    QImage copQImg = matToQImageCopy(copMat);
+                    QImage maxWarpQImg = matToQImageCopy(maxWarpMat);
+                    QImage avgWarpQImg = matToQImageCopy(avgWarpMat);
+                    QImage maxHeightQImg = matToQImageCopy(maxHeightMat);
+
+                    if (!copQImg.isNull() && zoomQfpCoplanar_)
+                        zoomQfpCoplanar_->setImage(copQImg);
+                    if (!maxWarpQImg.isNull() && zoomQfpMaxWarpAngle_)
+                        zoomQfpMaxWarpAngle_->setImage(maxWarpQImg);
+                    if (!avgWarpQImg.isNull() && zoomQfpAvgWarpAngle_)
+                        zoomQfpAvgWarpAngle_->setImage(avgWarpQImg);
+                    if (!maxHeightQImg.isNull() && zoomQfpWarpHeight_)
+                        zoomQfpWarpHeight_->setImage(maxHeightQImg);
+                }
+
                 ui->qfpBtnStart->setEnabled(true);
                 appendQfpLog(QStringLiteral("测量完成"));
             }, Qt::QueuedConnection);
@@ -2022,10 +2163,43 @@ void MainWindow::onQfpBtnStartClicked() {
     }).detach();
 }
 void MainWindow::onQfpBtnPlotClicked() {
-    appendQfpLog(QStringLiteral("绘图功能开发中"));
+    if (qfpCoplanaritySeries_.empty()) {
+        appendQfpLog(QStringLiteral("请先执行测量"));
+        return;
+    }
+    std::vector<int> xIndex(qfpCoplanaritySeries_.size());
+    for (int i = 0; i < static_cast<int>(qfpCoplanaritySeries_.size()); ++i) xIndex[i] = i + 1;
+
+    auto cop = tp::ChartRenderer::renderStyledBarChart(
+        qfpCoplanaritySeries_, xIndex,
+        "QFP Coplanarity", "Measure Index", "Pins",
+        cv::Scalar(243, 150, 33));
+    auto maxA = tp::ChartRenderer::renderStyledBarChart(
+        qfpMaxWarpAngleSeries_, xIndex,
+        "QFP Max Warp", "Measure Index", "Max Area(px)",
+        cv::Scalar(176, 39, 156));
+    auto avgA = tp::ChartRenderer::renderStyledBarChart(
+        qfpAvgWarpAngleSeries_, xIndex,
+        "QFP Avg Warp", "Measure Index", "Avg Area(px)",
+        cv::Scalar(55, 186, 0));
+    auto maxH = tp::ChartRenderer::renderStyledBarChart(
+        qfpMaxWarpHeightSeries_, xIndex,
+        "QFP Max Height", "Measure Index", "Height(px)",
+        cv::Scalar(99, 30, 233));
+
+    if (zoomQfpCoplanar_) zoomQfpCoplanar_->setImage(matToQImageCopy(cop));
+    if (zoomQfpMaxWarpAngle_) zoomQfpMaxWarpAngle_->setImage(matToQImageCopy(maxA));
+    if (zoomQfpAvgWarpAngle_) zoomQfpAvgWarpAngle_->setImage(matToQImageCopy(avgA));
+    if (zoomQfpWarpHeight_) zoomQfpWarpHeight_->setImage(matToQImageCopy(maxH));
+    appendQfpLog(QStringLiteral("QFP图表已刷新"));
 }
 void MainWindow::onQfpBtnPinShowClicked() {
-    appendQfpLog(QStringLiteral("引脚显示功能开发中"));
+    if (lastQfpSegImage_.empty()) {
+        appendQfpLog(QStringLiteral("请先执行测量"));
+        return;
+    }
+    if (zoomQfpSeg_) zoomQfpSeg_->setImage(matToQImageCopy(lastQfpSegImage_));
+    appendQfpLog(QStringLiteral("引脚分割结果已显示"));
 }
 void MainWindow::onQfpBtnImportClicked() {
     auto path = QFileDialog::getOpenFileName(this,

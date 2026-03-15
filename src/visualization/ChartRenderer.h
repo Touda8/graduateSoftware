@@ -6,6 +6,7 @@
 #include <string>
 #include <QPixmap>
 #include <QImage>
+#include <QColor>
 
 namespace tp {
 
@@ -25,6 +26,16 @@ public:
         const std::vector<int>& orders,
         int width = 600, int height = 400);
 
+    // Styled bar chart (picsrc-like), configurable title/axis/color
+    static cv::Mat renderStyledBarChart(
+        const std::vector<double>& values,
+        const std::vector<int>& xIndex,
+        const std::string& title,
+        const std::string& xLabel,
+        const std::string& yLabel,
+        const cv::Scalar& barColorBgr,
+        int width = 700, int height = 400);
+
     // Histogram of height distribution
     static cv::Mat renderHistogram(
         const std::vector<double>& values,
@@ -35,6 +46,25 @@ public:
     static cv::Mat renderCoplanarityLineChart(
         const std::vector<double>& coplanarities,
         int width = 600, int height = 400);
+
+    // Qt-native charts (picsrc-like axis/ticks/legend), supports Chinese text rendering
+    static QImage renderBarChartQt(
+        const std::vector<double>& data,
+        const std::vector<int>& xIndex,
+        const QString& title,
+        const QString& xLabel,
+        const QString& yLabel,
+        const QColor& barColor,
+        int width = 700,
+        int height = 400);
+
+    static QImage renderLineChartQt(
+        const std::vector<double>& data,
+        const QString& title,
+        const QString& xLabel,
+        const QString& yLabel,
+        int width = 700,
+        int height = 400);
 
     // Ball segmentation overlay: green circles + red centroids on grayscale image
     static cv::Mat renderBallOverlay(

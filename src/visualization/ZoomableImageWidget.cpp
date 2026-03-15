@@ -51,8 +51,11 @@ void ZoomableImageWidget::paintEvent(QPaintEvent* /*event*/)
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     painter.fillRect(rect(), palette().window());
 
-    if (image_.isNull())
-        return;
+    // 统一边框
+    painter.setPen(QPen(QColor(190, 190, 190), 1));
+    painter.drawRect(rect().adjusted(0, 0, -1, -1));
+
+    if (image_.isNull()) return;
 
     // Compute base scale to fit image in widget with aspect ratio preserved
     double wRatio = static_cast<double>(width()) / image_.width();
