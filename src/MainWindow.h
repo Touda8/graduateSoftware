@@ -174,6 +174,7 @@ private:
     void setupProjectorManager();
     void startSingleReconstruction();
     void startMultiReconstruction();
+    void updateBgaChartsFromCurrentResults();
 
     // Multi-cloud helpers
     std::string generateCloudId();

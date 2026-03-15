@@ -26,8 +26,10 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <numeric>
 #include "measurement/BGADetector.h"
 #include "measurement/BGAMeasurePipeline.h"
+#include "algorithm/picsrc/chart_bindgen.hpp"
 
 namespace {
 // XYZ 点云转为 XYZRGB（默认白色），用于导入/滤波后赋给 currentCloud_
@@ -76,6 +78,73 @@ QImage matToQImageCopy(const cv::Mat& src) {
 
     return QImage(converted.data, converted.cols, converted.rows,
         static_cast<int>(converted.step), QImage::Format_RGB888).copy();
+}
+
+QImage loadChartImage(const QString& filePath) {
+    QImage img(filePath);
+    return img.isNull() ? QImage() : img.copy();
+}
+
+QString ensureOutputDir() {
+    QDir outDir(QDir::currentPath() + "/output");
+    if (!outDir.exists()) outDir.mkpath(".");
+    return outDir.absolutePath();
+}
+
+QImage renderPicSrcBgaLineChart(const std::vector<double>& coplanarities) {
+    if (coplanarities.empty()) return {};
+    const QString outDir = ensureOutputDir();
+    const QString outFile = outDir + "/bga_line_chart.png";
+
+    {
+        GdiplusSession gdi;
+        ::ChartRenderer cr(700, 400);
+        cr.drawLineChart(coplanarities,
+            u8"BGA共面度10次重复测量",
+            u8"测量次数",
+            u8"共面度/mm",
+            outFile.toStdString());
+    }
+    return loadChartImage(outFile);
+}
+
+QImage renderPicSrcBgaDeviationBarChart(const std::vector<tp::BallResult>& balls) {
+    std::vector<double> heights;
+    heights.reserve(balls.size());
+    for (const auto& b : balls) {
+        if (b.success) heights.push_back(b.height);
+    }
+    if (heights.empty()) return {};
+
+    const double meanH = std::accumulate(heights.begin(), heights.end(), 0.0)
+        / static_cast<double>(heights.size());
+
+    std::vector<double> dev;
+    dev.reserve(heights.size());
+    for (double h : heights) dev.push_back(h - meanH); // signed deviation
+
+    std::vector<double> absDev(dev.size());
+    for (size_t i = 0; i < dev.size(); ++i) absDev[i] = std::abs(dev[i]);
+    const double mn = vec_mean(absDev);
+    const double sd = vec_std(absDev);
+    const double threshold = mn + 2.0 * sd;
+
+    const QString outDir = ensureOutputDir();
+    const QString outFile = outDir + "/bga_ball_deviation.png";
+
+    {
+        GdiplusSession gdi;
+        ::ChartRenderer cr(700, 400);
+        cr.drawThresholdBarChart(dev,
+            u8"BGA焊球共面度偏差分布",
+            u8"焊球编号",
+            u8"共面度偏差/mm",
+            threshold,
+            Gdiplus::Color(76, 175, 80),
+            Gdiplus::Color(255, 87, 34),
+            outFile.toStdString());
+    }
+    return loadChartImage(outFile);
 }
 
 // 将 CV_64F 相位图转为伪彩色 QPixmap
@@ -1686,6 +1755,36 @@ void MainWindow::onPcSpinTransZChanged(double) {}
 
 void MainWindow::onBgaSpinCountChanged(int) {
 }
+
+void MainWindow::updateBgaChartsFromCurrentResults() {
+    if (bgaCoplanarities_.empty()) {
+        appendBgaLog(QStringLiteral("暂无共面度数据，无法绘制图表"));
+        return;
+    }
+
+    // 直接使用 picsrc 同源算法: 柱状图=焊球偏差分布，折线图=重复测量共面度
+    QImage barQImg = renderPicSrcBgaDeviationBarChart(lastBgaResults_);
+    QImage lineQImg = renderPicSrcBgaLineChart(bgaCoplanarities_);
+
+    if (!barQImg.isNull() && zoomBgaBar_) {
+        zoomBgaBar_->setImage(barQImg);
+        appendBgaLog(QStringLiteral("BGA图像更新: 偏差柱状图 %1x%2")
+            .arg(barQImg.width()).arg(barQImg.height()));
+        appendBgaLog(QStringLiteral("柱状图来源: output/bga_ball_deviation.png"));
+    } else {
+        appendBgaLog(QStringLiteral("BGA图像更新失败: 偏差柱状图生成失败或控件为空"));
+    }
+
+    if (!lineQImg.isNull() && zoomBgaLine_) {
+        zoomBgaLine_->setImage(lineQImg);
+        appendBgaLog(QStringLiteral("BGA图像更新: 折线图 %1x%2")
+            .arg(lineQImg.width()).arg(lineQImg.height()));
+        appendBgaLog(QStringLiteral("折线图来源: output/bga_line_chart.png"));
+    } else {
+        appendBgaLog(QStringLiteral("BGA图像更新失败: 折线图生成失败或控件为空"));
+    }
+}
+
 void MainWindow::onBgaBtnStartClicked() {
     QString imgDir = ui->bgaEditImgFolder->text().trimmed();
     QString cloudDir = ui->bgaEditCloudFolder->text().trimmed();
@@ -1864,38 +1963,8 @@ void MainWindow::onBgaBtnStartClicked() {
                         .arg(ballQImg.width()).arg(ballQImg.height()));
                 }
 
-                // 在UI线程生成图表，避免工作线程中调用Qt绘图导致崩溃
-                if (!bgaCoplanarities_.empty()) {
-                    std::vector<int> xIndex(bgaCoplanarities_.size());
-                    for (int i = 0; i < static_cast<int>(bgaCoplanarities_.size()); ++i)
-                        xIndex[i] = i + 1;
-
-                    cv::Mat barMat = tp::ChartRenderer::renderStyledBarChart(
-                        bgaCoplanarities_, xIndex,
-                        "BGA Coplanarity",
-                        "Measure Index",
-                        "Coplanarity/mm",
-                        cv::Scalar(80, 175, 76));
-                    cv::Mat lineMat = tp::ChartRenderer::renderCoplanarityLineChart(bgaCoplanarities_);
-                    QImage barQImg = matToQImageCopy(barMat);
-                    QImage lineQImg = matToQImageCopy(lineMat);
-
-                    if (!barQImg.isNull() && zoomBgaBar_) {
-                        zoomBgaBar_->setImage(barQImg);
-                        appendBgaLog(QStringLiteral("BGA图像更新: 柱状图 %1x%2")
-                            .arg(barQImg.width()).arg(barQImg.height()));
-                    } else {
-                        appendBgaLog(QStringLiteral("BGA图像更新失败: 柱状图生成失败或控件为空"));
-                    }
-
-                    if (!lineQImg.isNull() && zoomBgaLine_) {
-                        zoomBgaLine_->setImage(lineQImg);
-                        appendBgaLog(QStringLiteral("BGA图像更新: 折线图 %1x%2")
-                            .arg(lineQImg.width()).arg(lineQImg.height()));
-                    } else {
-                        appendBgaLog(QStringLiteral("BGA图像更新失败: 折线图生成失败或控件为空"));
-                    }
-                }
+                // 在UI线程按当前算法结果绘制柱状图+折线图
+                updateBgaChartsFromCurrentResults();
 
                 ui->bgaBtnStart->setEnabled(true);
                 appendBgaLog(QStringLiteral("测量完成"));
@@ -1919,41 +1988,8 @@ void MainWindow::onBgaBtnPlotClicked() {
         appendBgaLog(QStringLiteral("请先执行测量"));
         return;
     }
-    // 重新生成图表并显示
-    if (!bgaCoplanarities_.empty()) {
-        std::vector<int> measIndex(bgaCoplanarities_.size());
-        for (int i = 0; i < static_cast<int>(bgaCoplanarities_.size()); ++i)
-            measIndex[i] = i + 1;
-        auto barImg = tp::ChartRenderer::renderStyledBarChart(
-            bgaCoplanarities_, measIndex,
-            "BGA Coplanarity",
-            "Measure Index",
-            "Coplanarity/mm",
-            cv::Scalar(80, 175, 76));
-        auto barQImg = matToQImageCopy(barImg);
-        if (!barQImg.isNull() && zoomBgaBar_) {
-            zoomBgaBar_->setImage(barQImg);
-            appendBgaLog(QStringLiteral("BGA图像更新: 柱状图 %1x%2")
-                .arg(barQImg.width()).arg(barQImg.height()));
-        } else if (barQImg.isNull()) {
-            appendBgaLog(QStringLiteral("BGA图像为空: 柱状图重绘失败"));
-        } else if (!zoomBgaBar_) {
-            appendBgaLog(QStringLiteral("BGA图像更新失败: 柱状图控件为空"));
-        }
-    }
-    if (!bgaCoplanarities_.empty()) {
-        auto lineImg = tp::ChartRenderer::renderCoplanarityLineChart(bgaCoplanarities_);
-        auto lineQImg = matToQImageCopy(lineImg);
-        if (!lineQImg.isNull() && zoomBgaLine_) {
-            zoomBgaLine_->setImage(lineQImg);
-            appendBgaLog(QStringLiteral("BGA图像更新: 折线图 %1x%2")
-                .arg(lineQImg.width()).arg(lineQImg.height()));
-        } else if (lineQImg.isNull()) {
-            appendBgaLog(QStringLiteral("BGA图像为空: 折线图重绘失败"));
-        } else if (!zoomBgaLine_) {
-            appendBgaLog(QStringLiteral("BGA图像更新失败: 折线图控件为空"));
-        }
-    }
+    // 按当前算法数据重绘柱状图+折线图
+    updateBgaChartsFromCurrentResults();
     appendBgaLog(QStringLiteral("图表已刷新"));
 }
 void MainWindow::onBgaBtnBallShowClicked() {
