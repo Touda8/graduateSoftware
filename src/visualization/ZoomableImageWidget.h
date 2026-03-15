@@ -2,6 +2,7 @@
 
 #include <QWidget>
 #include <QPixmap>
+#include <QImage>
 #include <QPointF>
 
 namespace tp {
@@ -16,6 +17,7 @@ public:
 
     /// Set image to display (thread-safe if called from GUI thread)
     void setImage(const QPixmap& pix);
+    void setImage(const QImage& img);
 
     /// Clear displayed image
     void clearImage();
@@ -35,7 +37,7 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
-    QPixmap pixmap_;
+    QImage image_;
     double zoom_ = 1.0;
     QPointF offset_{0, 0};      // pan offset in widget coordinates
     QPointF dragStart_;

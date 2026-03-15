@@ -18,6 +18,9 @@
 #include <QFileInfo>
 #include <QListWidgetItem>
 #include <QCheckBox>
+#include <QMetaType>
+#include <QImage>
+#include <QPixmap>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <filesystem>
@@ -51,6 +54,30 @@ cv::Mat imreadSafe(const std::string& utf8Path, int flags) {
     return cv::imdecode(buf, flags);
 }
 
+// 统一的 Mat -> QImage 深拷贝转换，避免跨线程/临时数据生命周期问题
+QImage matToQImageCopy(const cv::Mat& src) {
+    if (src.empty()) return {};
+
+    cv::Mat converted;
+    switch (src.type()) {
+    case CV_8UC1:
+        cv::cvtColor(src, converted, cv::COLOR_GRAY2RGB);
+        break;
+    case CV_8UC3:
+        cv::cvtColor(src, converted, cv::COLOR_BGR2RGB);
+        break;
+    case CV_8UC4:
+        cv::cvtColor(src, converted, cv::COLOR_BGRA2RGBA);
+        return QImage(converted.data, converted.cols, converted.rows,
+            static_cast<int>(converted.step), QImage::Format_RGBA8888).copy();
+    default:
+        return {};
+    }
+
+    return QImage(converted.data, converted.cols, converted.rows,
+        static_cast<int>(converted.step), QImage::Format_RGB888).copy();
+}
+
 // 将 CV_64F 相位图转为伪彩色 QPixmap
 QPixmap phaseToPixmap(const cv::Mat& phaseMat) {
     if (phaseMat.empty()) return {};
@@ -72,34 +99,54 @@ MainWindow::MainWindow(QWidget* parent)
 {
     ui->setupUi(this);
 
+    // 明确注册图像相关元类型（排查跨线程图像传递问题时更稳健）
+    qRegisterMetaType<cv::Mat>("cv::Mat");
+    qRegisterMetaType<QImage>("QImage");
+    qRegisterMetaType<QPixmap>("QPixmap");
+
     // 用 ZoomableImageWidget 替换 QLabel, 解决图片不显示 + 支持滚轮缩放
-    auto replaceLabel = [](QLabel* label, tp::ZoomableImageWidget*& outWidget) {
-        auto* parentLayout = label->parentWidget()->layout();
-        if (!parentLayout) return;
-        // Find the label's index in the layout
-        int idx = parentLayout->indexOf(label);
-        if (idx < 0) return;
-        auto* newWidget = new tp::ZoomableImageWidget(label->parentWidget());
-        parentLayout->removeWidget(label);
-        delete label;
-        // QBoxLayout: use insertWidget; for generic QLayout: addWidget
-        if (auto* box = qobject_cast<QBoxLayout*>(parentLayout))
-            box->insertWidget(idx, newWidget);
-        else
-            parentLayout->addWidget(newWidget);
+    // 注意：替换失败时保留原 QLabel 指针，不做置空，便于 fallback 调试
+    auto replaceLabel = [](QLabel* label, tp::ZoomableImageWidget*& outWidget) -> bool {
+        if (!label || !label->parentWidget()) return false;
+        auto* parent = label->parentWidget();
+        auto* parentLayout = parent->layout();
+
+        auto* newWidget = new tp::ZoomableImageWidget(parent);
+
+        if (parentLayout) {
+            int idx = parentLayout->indexOf(label);
+            if (idx >= 0) {
+                parentLayout->removeWidget(label);
+                if (auto* box = qobject_cast<QBoxLayout*>(parentLayout))
+                    box->insertWidget(idx, newWidget);
+                else
+                    parentLayout->addWidget(newWidget);
+                label->hide();
+                outWidget = newWidget;
+                return true;
+            }
+        }
+
+        // fallback: 无法插入布局时，覆盖原label几何
+        newWidget->setGeometry(label->geometry());
+        newWidget->show();
+        label->hide();
         outWidget = newWidget;
+        return true;
     };
 
     replaceLabel(ui->bgaBarLabel,    zoomBgaBar_);
-    ui->bgaBarLabel = nullptr;
     replaceLabel(ui->bgaLineLabel,   zoomBgaLine_);
-    ui->bgaLineLabel = nullptr;
     replaceLabel(ui->bgaBallLabel,   zoomBgaBall_);
-    ui->bgaBallLabel = nullptr;
     replaceLabel(ui->resPhaseLabel1, zoomResPhase1_);
-    ui->resPhaseLabel1 = nullptr;
     replaceLabel(ui->resPhaseLabel2, zoomResPhase2_);
-    ui->resPhaseLabel2 = nullptr;
+
+    tp::Logger::instance().info(
+        std::string("Zoomable widgets init: bgaBar=") + (zoomBgaBar_ ? "ok" : "null") +
+        ", bgaLine=" + (zoomBgaLine_ ? std::string("ok") : std::string("null")) +
+        ", bgaBall=" + (zoomBgaBall_ ? std::string("ok") : std::string("null")) +
+        ", resP1=" + (zoomResPhase1_ ? std::string("ok") : std::string("null")) +
+        ", resP2=" + (zoomResPhase2_ ? std::string("ok") : std::string("null")));
 
     initVtkWidget();
     setupConnections();
@@ -879,9 +926,9 @@ void MainWindow::startSingleReconstruction() {
                 ui->pcCloudListWidget->addItem(item);
                 ui->pcCloudListWidget->setCurrentItem(item);
                 if (!img1.isNull())
-                    zoomResPhase1_->setImage(QPixmap::fromImage(img1));
+                    zoomResPhase1_->setImage(img1);
                 if (!img2.isNull())
-                    zoomResPhase2_->setImage(QPixmap::fromImage(img2));
+                    zoomResPhase2_->setImage(img2);
                 setState(State::DONE);
             }, Qt::QueuedConnection);
 
@@ -1727,8 +1774,13 @@ void MainWindow::onBgaBtnStartClicked() {
                 ballOverlayImg = tp::ChartRenderer::renderBallOverlay(lastImage, lastResults);
             }
 
+            // 在工作线程中提前做深拷贝QImage，避免UI线程拿到悬空Mat数据
+            QImage barQImg = matToQImageCopy(barChartImg);
+            QImage lineQImg = matToQImageCopy(lineChartImg);
+            QImage ballQImg = matToQImageCopy(ballOverlayImg);
+
             QMetaObject::invokeMethod(this, [this, resultText, coplanarities,
-                    barChartImg, lineChartImg, ballOverlayImg, lastResults, lastImage,
+                    barQImg, lineQImg, ballQImg, lastResults, lastImage,
                     lastNormal, lastD, lastNumRows]() {
                 bgaCoplanarities_ = coplanarities;
                 lastBgaResults_ = lastResults;
@@ -1739,17 +1791,34 @@ void MainWindow::onBgaBtnStartClicked() {
 
                 ui->bgaDataText->setPlainText(resultText);
 
-                if (!ballOverlayImg.empty()) {
-                    auto pix = tp::ChartRenderer::matToPixmap(ballOverlayImg);
-                    if (!pix.isNull()) zoomBgaBall_->setImage(pix);
+                if (ballQImg.isNull()) {
+                    appendBgaLog(QStringLiteral("BGA图像为空: 焊球定位图未生成"));
+                } else if (!zoomBgaBall_) {
+                    appendBgaLog(QStringLiteral("BGA图像更新失败: 焊球定位控件为空"));
+                } else {
+                    zoomBgaBall_->setImage(ballQImg);
+                    appendBgaLog(QStringLiteral("BGA图像更新: 焊球定位图 %1x%2")
+                        .arg(ballQImg.width()).arg(ballQImg.height()));
                 }
-                if (!barChartImg.empty()) {
-                    auto pix = tp::ChartRenderer::matToPixmap(barChartImg);
-                    if (!pix.isNull()) zoomBgaBar_->setImage(pix);
+
+                if (barQImg.isNull()) {
+                    appendBgaLog(QStringLiteral("BGA图像为空: 柱状图未生成"));
+                } else if (!zoomBgaBar_) {
+                    appendBgaLog(QStringLiteral("BGA图像更新失败: 柱状图控件为空"));
+                } else {
+                    zoomBgaBar_->setImage(barQImg);
+                    appendBgaLog(QStringLiteral("BGA图像更新: 柱状图 %1x%2")
+                        .arg(barQImg.width()).arg(barQImg.height()));
                 }
-                if (!lineChartImg.empty()) {
-                    auto pix = tp::ChartRenderer::matToPixmap(lineChartImg);
-                    if (!pix.isNull()) zoomBgaLine_->setImage(pix);
+
+                if (lineQImg.isNull()) {
+                    appendBgaLog(QStringLiteral("BGA图像为空: 折线图未生成"));
+                } else if (!zoomBgaLine_) {
+                    appendBgaLog(QStringLiteral("BGA图像更新失败: 折线图控件为空"));
+                } else {
+                    zoomBgaLine_->setImage(lineQImg);
+                    appendBgaLog(QStringLiteral("BGA图像更新: 折线图 %1x%2")
+                        .arg(lineQImg.width()).arg(lineQImg.height()));
                 }
 
                 ui->bgaBtnStart->setEnabled(true);
@@ -1784,13 +1853,29 @@ void MainWindow::onBgaBtnPlotClicked() {
     }
     if (!heights.empty()) {
         auto barImg = tp::ChartRenderer::renderBarChart(heights, orders);
-        auto pix = tp::ChartRenderer::matToPixmap(barImg);
-        if (!pix.isNull()) zoomBgaBar_->setImage(pix);
+        auto qimg = matToQImageCopy(barImg);
+        if (!qimg.isNull() && zoomBgaBar_) {
+            zoomBgaBar_->setImage(qimg);
+            appendBgaLog(QStringLiteral("BGA图像更新: 柱状图 %1x%2")
+                .arg(qimg.width()).arg(qimg.height()));
+        } else if (qimg.isNull()) {
+            appendBgaLog(QStringLiteral("BGA图像为空: 柱状图重绘失败"));
+        } else if (!zoomBgaBar_) {
+            appendBgaLog(QStringLiteral("BGA图像更新失败: 柱状图控件为空"));
+        }
     }
     if (!bgaCoplanarities_.empty()) {
         auto lineImg = tp::ChartRenderer::renderCoplanarityLineChart(bgaCoplanarities_);
-        auto pix = tp::ChartRenderer::matToPixmap(lineImg);
-        if (!pix.isNull()) zoomBgaLine_->setImage(pix);
+        auto qimg = matToQImageCopy(lineImg);
+        if (!qimg.isNull() && zoomBgaLine_) {
+            zoomBgaLine_->setImage(qimg);
+            appendBgaLog(QStringLiteral("BGA图像更新: 折线图 %1x%2")
+                .arg(qimg.width()).arg(qimg.height()));
+        } else if (qimg.isNull()) {
+            appendBgaLog(QStringLiteral("BGA图像为空: 折线图重绘失败"));
+        } else if (!zoomBgaLine_) {
+            appendBgaLog(QStringLiteral("BGA图像更新失败: 折线图控件为空"));
+        }
     }
     appendBgaLog(QStringLiteral("图表已刷新"));
 }
@@ -1801,9 +1886,16 @@ void MainWindow::onBgaBtnBallShowClicked() {
     }
     auto orderOverlay = tp::ChartRenderer::renderOrderOverlay(
         lastBgaImage_, lastBgaResults_, lastBgaNumRows_);
-    auto pix = tp::ChartRenderer::matToPixmap(orderOverlay);
-    if (!pix.isNull())
-        zoomBgaBall_->setImage(pix);
+    auto qimg = matToQImageCopy(orderOverlay);
+    if (!qimg.isNull() && zoomBgaBall_) {
+        zoomBgaBall_->setImage(qimg);
+        appendBgaLog(QStringLiteral("BGA图像更新: 焊球编号图 %1x%2")
+            .arg(qimg.width()).arg(qimg.height()));
+    } else if (qimg.isNull()) {
+        appendBgaLog(QStringLiteral("BGA图像为空: 焊球编号图重绘失败"));
+    } else if (!zoomBgaBall_) {
+        appendBgaLog(QStringLiteral("BGA图像更新失败: 焊球编号控件为空"));
+    }
     appendBgaLog(QStringLiteral("焊球编号标注已显示"));
 }
 void MainWindow::onBgaBtnImportClicked() {

@@ -7,9 +7,13 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QMetaType>
+#include <QImage>
+#include <QPixmap>
 #include <iostream>
 #include <clocale>
 #include <cstdio>
+#include <opencv2/core.hpp>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -65,6 +69,11 @@ int main(int argc, char* argv[]) {
 
     QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
     QApplication app(argc, argv);
+
+    // 注册跨线程图像传输相关元类型，避免QueuedConnection场景下类型未注册
+    qRegisterMetaType<cv::Mat>("cv::Mat");
+    qRegisterMetaType<QImage>("QImage");
+    qRegisterMetaType<QPixmap>("QPixmap");
 
     std::cout << "[STARTUP] Qt version: " << qVersion() << std::endl;
     std::cout << "[STARTUP] App dir: " << QCoreApplication::applicationDirPath().toStdString() << std::endl;

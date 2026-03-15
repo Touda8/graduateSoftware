@@ -19,14 +19,21 @@ ZoomableImageWidget::ZoomableImageWidget(QWidget* parent)
 
 void ZoomableImageWidget::setImage(const QPixmap& pix)
 {
-    pixmap_ = pix;
+    image_ = pix.toImage();
+    resetView();
+    update();
+}
+
+void ZoomableImageWidget::setImage(const QImage& img)
+{
+    image_ = img;
     resetView();
     update();
 }
 
 void ZoomableImageWidget::clearImage()
 {
-    pixmap_ = QPixmap();
+    image_ = QImage();
     zoom_ = 1.0;
     offset_ = {0, 0};
     update();
@@ -44,29 +51,29 @@ void ZoomableImageWidget::paintEvent(QPaintEvent* /*event*/)
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     painter.fillRect(rect(), palette().window());
 
-    if (pixmap_.isNull())
+    if (image_.isNull())
         return;
 
     // Compute base scale to fit image in widget with aspect ratio preserved
-    double wRatio = static_cast<double>(width()) / pixmap_.width();
-    double hRatio = static_cast<double>(height()) / pixmap_.height();
+    double wRatio = static_cast<double>(width()) / image_.width();
+    double hRatio = static_cast<double>(height()) / image_.height();
     double baseScale = std::min(wRatio, hRatio);
     double totalScale = baseScale * zoom_;
 
-    double drawW = pixmap_.width() * totalScale;
-    double drawH = pixmap_.height() * totalScale;
+    double drawW = image_.width() * totalScale;
+    double drawH = image_.height() * totalScale;
 
     // Center + pan offset
     double cx = (width() - drawW) / 2.0 + offset_.x();
     double cy = (height() - drawH) / 2.0 + offset_.y();
 
     QRectF target(cx, cy, drawW, drawH);
-    painter.drawPixmap(target, pixmap_, QRectF(pixmap_.rect()));
+    painter.drawImage(target, image_, QRectF(image_.rect()));
 }
 
 void ZoomableImageWidget::wheelEvent(QWheelEvent* event)
 {
-    if (pixmap_.isNull()) {
+    if (image_.isNull()) {
         event->ignore();
         return;
     }
@@ -95,7 +102,7 @@ void ZoomableImageWidget::wheelEvent(QWheelEvent* event)
 
 void ZoomableImageWidget::mousePressEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton && !pixmap_.isNull()) {
+    if (event->button() == Qt::LeftButton && !image_.isNull()) {
         dragging_ = true;
         dragStart_ = event->pos();
         offsetAtDragStart_ = offset_;
