@@ -31,6 +31,11 @@ public:
         int bins = 20,
         int width = 600, int height = 400);
 
+    // Coplanarity repeated measurement line chart (N-times)
+    static cv::Mat renderCoplanarityLineChart(
+        const std::vector<double>& coplanarities,
+        int width = 600, int height = 400);
+
     // Ball segmentation overlay: green circles + red centroids on grayscale image
     static cv::Mat renderBallOverlay(
         const cv::Mat& grayImage,

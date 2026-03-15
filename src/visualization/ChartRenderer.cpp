@@ -8,6 +8,7 @@
 #include <cmath>
 #include <sstream>
 #include <iomanip>
+#include <cstdio>
 
 namespace tp {
 
@@ -495,6 +496,117 @@ cv::Mat ChartRenderer::renderOrderOverlay(
                     cv::Point(center.x + DOT_RADIUS + 2, center.y + 4),
                     cv::FONT_HERSHEY_SIMPLEX, 0.35,
                     white, 1, cv::LINE_AA);
+    }
+
+    return canvas;
+}
+
+// ---------------------------------------------------------------------------
+// renderCoplanarityLineChart — N 次共面度重复测量折线图
+// ---------------------------------------------------------------------------
+cv::Mat ChartRenderer::renderCoplanarityLineChart(
+    const std::vector<double>& coplanarities,
+    int width, int height)
+{
+    cv::Mat canvas(height, width, CV_8UC3, cv::Scalar(255, 255, 255));
+    const int n = static_cast<int>(coplanarities.size());
+    if (n == 0) return canvas;
+
+    // Margins
+    constexpr int marginL = 80, marginR = 30, marginT = 40, marginB = 50;
+    int plotW = width - marginL - marginR;
+    int plotH = height - marginT - marginB;
+
+    // Y range
+    double minVal = *std::min_element(coplanarities.begin(), coplanarities.end());
+    double maxVal = *std::max_element(coplanarities.begin(), coplanarities.end());
+    double range = maxVal - minVal;
+    if (range < 1e-9) range = std::max(maxVal * 0.1, 0.001);
+    double yLo = minVal - range * 0.15;
+    double yHi = maxVal + range * 0.15;
+    double yRange = yHi - yLo;
+
+    // Mean line
+    double sum = 0;
+    for (auto v : coplanarities) sum += v;
+    double mean = sum / n;
+
+    // Std dev
+    double sqSum = 0;
+    for (auto v : coplanarities) sqSum += (v - mean) * (v - mean);
+    double stdDev = (n > 1) ? std::sqrt(sqSum / (n - 1)) : 0;
+
+    auto toScreenX = [&](int idx) -> int {
+        if (n == 1) return marginL + plotW / 2;
+        return marginL + static_cast<int>(idx * plotW / (n - 1.0));
+    };
+    auto toScreenY = [&](double val) -> int {
+        return marginT + static_cast<int>((yHi - val) / yRange * plotH);
+    };
+
+    // Draw axes
+    const cv::Scalar black(0, 0, 0);
+    const cv::Scalar gray(200, 200, 200);
+    cv::line(canvas, {marginL, marginT}, {marginL, height - marginB}, black, 1);
+    cv::line(canvas, {marginL, height - marginB}, {width - marginR, height - marginB}, black, 1);
+
+    // Y grid lines (5 ticks)
+    for (int i = 0; i <= 4; ++i) {
+        double val = yLo + yRange * i / 4.0;
+        int sy = toScreenY(val);
+        cv::line(canvas, {marginL, sy}, {width - marginR, sy}, gray, 1);
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.4f", val);
+        cv::putText(canvas, buf, {5, sy + 4}, cv::FONT_HERSHEY_SIMPLEX, 0.35, black, 1, cv::LINE_AA);
+    }
+
+    // X labels
+    for (int i = 0; i < n; ++i) {
+        int sx = toScreenX(i);
+        cv::line(canvas, {sx, height - marginB}, {sx, height - marginB + 4}, black, 1);
+        std::string label = std::to_string(i + 1);
+        cv::putText(canvas, label, {sx - 4, height - marginB + 18},
+                    cv::FONT_HERSHEY_SIMPLEX, 0.38, black, 1, cv::LINE_AA);
+    }
+
+    // Mean line (dashed effect)
+    {
+        int my = toScreenY(mean);
+        const cv::Scalar orange(0, 140, 255);
+        for (int x = marginL; x < width - marginR; x += 8) {
+            int x2 = std::min(x + 4, width - marginR);
+            cv::line(canvas, {x, my}, {x2, my}, orange, 1);
+        }
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "Mean=%.4f", mean);
+        cv::putText(canvas, buf, {width - marginR - 120, my - 6},
+                    cv::FONT_HERSHEY_SIMPLEX, 0.35, orange, 1, cv::LINE_AA);
+    }
+
+    // Draw polyline
+    const cv::Scalar blue(200, 80, 0);
+    std::vector<cv::Point> pts(n);
+    for (int i = 0; i < n; ++i) {
+        pts[i] = {toScreenX(i), toScreenY(coplanarities[i])};
+    }
+    cv::polylines(canvas, pts, false, blue, 2, cv::LINE_AA);
+
+    // Draw data points
+    const cv::Scalar red(0, 0, 220);
+    for (int i = 0; i < n; ++i) {
+        cv::circle(canvas, pts[i], 4, red, cv::FILLED, cv::LINE_AA);
+    }
+
+    // Title
+    cv::putText(canvas, "BGA Coplanarity Repeated Measurement",
+                {marginL + 10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.50, black, 1, cv::LINE_AA);
+
+    // Stats box
+    {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "N=%d  Mean=%.4f mm  Std=%.4f mm", n, mean, stdDev);
+        cv::putText(canvas, buf, {marginL + 10, height - 8},
+                    cv::FONT_HERSHEY_SIMPLEX, 0.35, black, 1, cv::LINE_AA);
     }
 
     return canvas;

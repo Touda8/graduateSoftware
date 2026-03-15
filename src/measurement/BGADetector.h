@@ -24,7 +24,14 @@ struct BallResult {
     double radius = 0;     // 等效半径
     double x3d = 0, y3d = 0, z3d = 0; // 3D质心(mm)
     double height = 0;     // 到基板平面距离(mm)
+    double nx = 0, ny = 0, nz = 0;    // 焊球PCA法向量
     bool success = false;
+};
+
+// detectBallMask 返回的掩膜集合
+struct DetectionMasks {
+    cv::Mat ballMask;      // 最终焊球掩膜
+    cv::Mat chipMask;      // 芯片区域掩膜 (255=chip)
 };
 
 class BGADetector : public IMeasure {
@@ -55,8 +62,8 @@ public:
     double getSubstrateD() const { return substrateD_; }
 
 private:
-    // 生成焊球掩膜（芯片定位+Otsu+形态学+筛选）
-    cv::Mat detectBallMask(const cv::Mat& gray, const BGAConfig& cfg);
+    // 生成焊球掩膜（芯片定位+Otsu+形态学+筛选），同时返回芯片掩膜
+    DetectionMasks detectBallMask(const cv::Mat& gray, const BGAConfig& cfg);
 
     // PCA平面拟合，返回法向量。centroid和d通过引用返回
     Eigen::Vector3d fitPCAPlane(const std::vector<Eigen::Vector3d>& pts,

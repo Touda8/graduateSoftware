@@ -18,7 +18,7 @@
 
 // forward declarations
 namespace Ui { class twoProjectorClass; }
-namespace tp { class VtkWidget; }
+namespace tp { class VtkWidget; class ZoomableImageWidget; }
 class ProjectorManager;
 class QListWidgetItem;
 
@@ -194,6 +194,13 @@ private:
     std::map<std::string, tp::CloudEntry> cloudStore_;
     std::string selectedCloudId_;
     int cloudIdCounter_ = 0;
+
+    // ZoomableImageWidget replacements for QLabels
+    tp::ZoomableImageWidget* zoomBgaBar_ = nullptr;
+    tp::ZoomableImageWidget* zoomBgaLine_ = nullptr;
+    tp::ZoomableImageWidget* zoomBgaBall_ = nullptr;
+    tp::ZoomableImageWidget* zoomResPhase1_ = nullptr;
+    tp::ZoomableImageWidget* zoomResPhase2_ = nullptr;
 
     // BGA results
     std::vector<tp::BallResult> lastBgaResults_;

@@ -2,6 +2,7 @@
 #include "ui_twoProjector.h"
 #include "visualization/VtkWidget.h"
 #include "visualization/ChartRenderer.h"
+#include "visualization/ZoomableImageWidget.h"
 #include "common/Config.h"
 #include "common/Logger.h"
 #include "common/Exceptions.h"
@@ -12,6 +13,8 @@
 #include <QTimer>
 #include <QDir>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QFileInfo>
 #include <QListWidgetItem>
 #include <QCheckBox>
@@ -68,6 +71,36 @@ MainWindow::MainWindow(QWidget* parent)
     , ui(new Ui::twoProjectorClass)
 {
     ui->setupUi(this);
+
+    // 用 ZoomableImageWidget 替换 QLabel, 解决图片不显示 + 支持滚轮缩放
+    auto replaceLabel = [](QLabel* label, tp::ZoomableImageWidget*& outWidget) {
+        auto* parentLayout = label->parentWidget()->layout();
+        if (!parentLayout) return;
+        // Find the label's index in the layout
+        int idx = parentLayout->indexOf(label);
+        if (idx < 0) return;
+        auto* newWidget = new tp::ZoomableImageWidget(label->parentWidget());
+        parentLayout->removeWidget(label);
+        delete label;
+        // QBoxLayout: use insertWidget; for generic QLayout: addWidget
+        if (auto* box = qobject_cast<QBoxLayout*>(parentLayout))
+            box->insertWidget(idx, newWidget);
+        else
+            parentLayout->addWidget(newWidget);
+        outWidget = newWidget;
+    };
+
+    replaceLabel(ui->bgaBarLabel,    zoomBgaBar_);
+    ui->bgaBarLabel = nullptr;
+    replaceLabel(ui->bgaLineLabel,   zoomBgaLine_);
+    ui->bgaLineLabel = nullptr;
+    replaceLabel(ui->bgaBallLabel,   zoomBgaBall_);
+    ui->bgaBallLabel = nullptr;
+    replaceLabel(ui->resPhaseLabel1, zoomResPhase1_);
+    ui->resPhaseLabel1 = nullptr;
+    replaceLabel(ui->resPhaseLabel2, zoomResPhase2_);
+    ui->resPhaseLabel2 = nullptr;
+
     initVtkWidget();
     setupConnections();
     setupProjectorManager();
@@ -846,11 +879,9 @@ void MainWindow::startSingleReconstruction() {
                 ui->pcCloudListWidget->addItem(item);
                 ui->pcCloudListWidget->setCurrentItem(item);
                 if (!img1.isNull())
-                    ui->resPhaseLabel1->setPixmap(QPixmap::fromImage(img1).scaled(
-                        ui->resPhaseLabel1->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                    zoomResPhase1_->setImage(QPixmap::fromImage(img1));
                 if (!img2.isNull())
-                    ui->resPhaseLabel2->setPixmap(QPixmap::fromImage(img2).scaled(
-                        ui->resPhaseLabel2->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                    zoomResPhase2_->setImage(QPixmap::fromImage(img2));
                 setState(State::DONE);
             }, Qt::QueuedConnection);
 
@@ -1588,25 +1619,28 @@ void MainWindow::onBgaBtnStartClicked() {
                 }
                 if (!cloud || cloud->empty()) continue;
 
-                // Build Z matrix from ordered point cloud
+                // Build Z matrix from ordered point cloud (NaN→0)
                 int rows = brightImg.rows, cols = brightImg.cols;
                 cv::Mat Z(rows, cols, CV_64F, cv::Scalar(0));
                 if (static_cast<int>(cloud->size()) == rows * cols) {
                     for (int r = 0; r < rows; ++r)
-                        for (int c = 0; c < cols; ++c)
-                            Z.at<double>(r, c) = (*cloud)[r * cols + c].z;
+                        for (int c = 0; c < cols; ++c) {
+                            float z = (*cloud)[r * cols + c].z;
+                            Z.at<double>(r, c) = std::isfinite(z) ? static_cast<double>(z) : 0.0;
+                        }
                 }
 
                 // Use calibration X/Y matrices
                 cv::Mat X = calib.X, Y = calib.Y;
                 if (X.empty() || Y.empty()) {
-                    // Fallback: build from ordered cloud
+                    // Fallback: build from ordered cloud (NaN→0)
                     X = cv::Mat(rows, cols, CV_64F);
                     Y = cv::Mat(rows, cols, CV_64F);
                     for (int r = 0; r < rows; ++r)
                         for (int c = 0; c < cols; ++c) {
-                            X.at<double>(r, c) = (*cloud)[r * cols + c].x;
-                            Y.at<double>(r, c) = (*cloud)[r * cols + c].y;
+                            auto& pt = (*cloud)[r * cols + c];
+                            X.at<double>(r, c) = std::isfinite(pt.x) ? static_cast<double>(pt.x) : 0.0;
+                            Y.at<double>(r, c) = std::isfinite(pt.y) ? static_cast<double>(pt.y) : 0.0;
                         }
                 }
 
@@ -1680,20 +1714,21 @@ void MainWindow::onBgaBtnStartClicked() {
                 orders.push_back(b.order);
             }
 
-            QPixmap barPix, histPix, ballPix;
+            // 生成图表（在工作线程中仅做 cv::Mat 渲染，不创建 QPixmap）
+            cv::Mat barChartImg, lineChartImg, ballOverlayImg;
             if (!heights.empty()) {
-                barPix = tp::ChartRenderer::matToPixmap(
-                    tp::ChartRenderer::renderBarChart(heights, orders));
-                histPix = tp::ChartRenderer::matToPixmap(
-                    tp::ChartRenderer::renderHistogram(heights));
+                barChartImg = tp::ChartRenderer::renderBarChart(heights, orders);
+            }
+            // 共面度 n 次重复测量折线图
+            if (!coplanarities.empty()) {
+                lineChartImg = tp::ChartRenderer::renderCoplanarityLineChart(coplanarities);
             }
             if (!lastImage.empty() && !lastResults.empty()) {
-                ballPix = tp::ChartRenderer::matToPixmap(
-                    tp::ChartRenderer::renderBallOverlay(lastImage, lastResults));
+                ballOverlayImg = tp::ChartRenderer::renderBallOverlay(lastImage, lastResults);
             }
 
             QMetaObject::invokeMethod(this, [this, resultText, coplanarities,
-                    barPix, histPix, ballPix, lastResults, lastImage,
+                    barChartImg, lineChartImg, ballOverlayImg, lastResults, lastImage,
                     lastNormal, lastD, lastNumRows]() {
                 bgaCoplanarities_ = coplanarities;
                 lastBgaResults_ = lastResults;
@@ -1703,18 +1738,19 @@ void MainWindow::onBgaBtnStartClicked() {
                 lastBgaNumRows_ = lastNumRows;
 
                 ui->bgaDataText->setPlainText(resultText);
-                if (!ballPix.isNull())
-                    ui->bgaBallLabel->setPixmap(ballPix.scaled(
-                        ui->bgaBallLabel->size(), Qt::KeepAspectRatio,
-                        Qt::SmoothTransformation));
-                if (!barPix.isNull())
-                    ui->bgaBarLabel->setPixmap(barPix.scaled(
-                        ui->bgaBarLabel->size(), Qt::KeepAspectRatio,
-                        Qt::SmoothTransformation));
-                if (!histPix.isNull())
-                    ui->bgaLineLabel->setPixmap(histPix.scaled(
-                        ui->bgaLineLabel->size(), Qt::KeepAspectRatio,
-                        Qt::SmoothTransformation));
+
+                if (!ballOverlayImg.empty()) {
+                    auto pix = tp::ChartRenderer::matToPixmap(ballOverlayImg);
+                    if (!pix.isNull()) zoomBgaBall_->setImage(pix);
+                }
+                if (!barChartImg.empty()) {
+                    auto pix = tp::ChartRenderer::matToPixmap(barChartImg);
+                    if (!pix.isNull()) zoomBgaBar_->setImage(pix);
+                }
+                if (!lineChartImg.empty()) {
+                    auto pix = tp::ChartRenderer::matToPixmap(lineChartImg);
+                    if (!pix.isNull()) zoomBgaLine_->setImage(pix);
+                }
 
                 ui->bgaBtnStart->setEnabled(true);
                 appendBgaLog(QStringLiteral("测量完成"));
@@ -1725,6 +1761,11 @@ void MainWindow::onBgaBtnStartClicked() {
                 appendBgaLog(QStringLiteral("测量错误 - ") + msg);
                 ui->bgaBtnStart->setEnabled(true);
             }, Qt::QueuedConnection);
+        } catch (...) {
+            QMetaObject::invokeMethod(this, [this]() {
+                appendBgaLog(QStringLiteral("测量发生未知错误"));
+                ui->bgaBtnStart->setEnabled(true);
+            }, Qt::QueuedConnection);
         }
     }).detach();
 }
@@ -1733,8 +1774,25 @@ void MainWindow::onBgaBtnPlotClicked() {
         appendBgaLog(QStringLiteral("请先执行测量"));
         return;
     }
-    vtkWidget_->showBgaScatter(lastBgaResults_, lastSubstrateNormal_, lastSubstrateD_);
-    appendBgaLog(QStringLiteral("3D 散点图已显示"));
+    // 重新生成图表并显示
+    std::vector<double> heights;
+    std::vector<int> orders;
+    for (const auto& b : lastBgaResults_) {
+        if (!b.success) continue;
+        heights.push_back(b.height);
+        orders.push_back(b.order);
+    }
+    if (!heights.empty()) {
+        auto barImg = tp::ChartRenderer::renderBarChart(heights, orders);
+        auto pix = tp::ChartRenderer::matToPixmap(barImg);
+        if (!pix.isNull()) zoomBgaBar_->setImage(pix);
+    }
+    if (!bgaCoplanarities_.empty()) {
+        auto lineImg = tp::ChartRenderer::renderCoplanarityLineChart(bgaCoplanarities_);
+        auto pix = tp::ChartRenderer::matToPixmap(lineImg);
+        if (!pix.isNull()) zoomBgaLine_->setImage(pix);
+    }
+    appendBgaLog(QStringLiteral("图表已刷新"));
 }
 void MainWindow::onBgaBtnBallShowClicked() {
     if (lastBgaResults_.empty() || lastBgaImage_.empty()) {
@@ -1745,8 +1803,7 @@ void MainWindow::onBgaBtnBallShowClicked() {
         lastBgaImage_, lastBgaResults_, lastBgaNumRows_);
     auto pix = tp::ChartRenderer::matToPixmap(orderOverlay);
     if (!pix.isNull())
-        ui->bgaBallLabel->setPixmap(pix.scaled(
-            ui->bgaBallLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        zoomBgaBall_->setImage(pix);
     appendBgaLog(QStringLiteral("焊球编号标注已显示"));
 }
 void MainWindow::onBgaBtnImportClicked() {
