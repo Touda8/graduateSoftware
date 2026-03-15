@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "ui_twoProjector.h"
 #include "visualization/VtkWidget.h"
+#include "visualization/ChartRenderer.h"
 #include "common/Config.h"
 #include "common/Logger.h"
 #include "common/Exceptions.h"
@@ -13,6 +14,7 @@
 #include <QVBoxLayout>
 #include <QFileInfo>
 #include <QListWidgetItem>
+#include <QCheckBox>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <filesystem>
@@ -185,6 +187,18 @@ void MainWindow::setupConnections() {
     ui->pcCloudListWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(ui->pcCloudListWidget, &QWidget::customContextMenuRequested,
             this, &MainWindow::onPcCloudListContextMenu);
+    // 点云列表勾选框变化
+    connect(ui->pcCloudListWidget, &QListWidget::itemChanged,
+            this, &MainWindow::onPcCloudListItemChanged);
+    // 点云列表选中变化
+    connect(ui->pcCloudListWidget, &QListWidget::currentItemChanged,
+            this, &MainWindow::onPcCloudListCurrentChanged);
+    // 高度染色切换
+    connect(ui->pcCheckHeightColor, &QCheckBox::stateChanged,
+            this, &MainWindow::onPcCheckHeightColorChanged);
+    // ROI crop signal
+    connect(vtkWidget_, &tp::VtkWidget::roiCropRequested,
+            this, &MainWindow::performROICrop);
     connect(ui->pcBtnCropROI, &QPushButton::clicked,
             this, &MainWindow::onPcBtnCropROIClicked);
     connect(ui->pcBtnCropPlane, &QPushButton::clicked,
@@ -375,6 +389,21 @@ void MainWindow::appendQfpLog(const QString& msg) {
 void MainWindow::appendCapLog(const QString& msg) {
     ui->capLogText->append(
         QDateTime::currentDateTime().toString("[hh:mm:ss] ") + msg);
+}
+
+// ============================================================
+// Multi-cloud helpers
+// ============================================================
+
+std::string MainWindow::generateCloudId() {
+    return "cloud_" + std::to_string(++cloudIdCounter_);
+}
+
+tp::CloudEntry* MainWindow::selectedEntry() {
+    if (selectedCloudId_.empty()) return nullptr;
+    auto it = cloudStore_.find(selectedCloudId_);
+    if (it == cloudStore_.end()) return nullptr;
+    return &(it->second);
 }
 
 void MainWindow::updateProStatusLabel(int projIdx, bool connected) {
@@ -799,11 +828,21 @@ void MainWindow::startSingleReconstruction() {
 
             QMetaObject::invokeMethod(this, [this, colorCloud, img1, img2]() {
                 currentCloud_ = colorCloud;
-                vtkWidget_->updateCloud(currentCloud_);
-                // 将重建点云添加到点云列表
+                // Add to multi-cloud system
+                std::string id = generateCloudId();
+                tp::CloudEntry entry;
+                entry.id = id;
+                entry.name = "Recon_" + std::to_string(cloudIdCounter_);
+                entry.cloud = colorCloud;
+                entry.visible = true;
+                cloudStore_[id] = entry;
+                vtkWidget_->addOrUpdateCloud(id, colorCloud, false);
+
                 auto* item = new QListWidgetItem(
-                    QStringLiteral("重建点云 (%1 点)").arg(currentCloud_->size()));
-                item->setData(Qt::UserRole, QStringLiteral("__recon_current__"));
+                    QStringLiteral("重建点云 (%1 点)").arg(colorCloud->size()));
+                item->setData(Qt::UserRole, QString::fromStdString(id));
+                item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+                item->setCheckState(Qt::Checked);
                 ui->pcCloudListWidget->addItem(item);
                 ui->pcCloudListWidget->setCurrentItem(item);
                 if (!img1.isNull())
@@ -1033,11 +1072,17 @@ void MainWindow::onResCheckWireframeChanged(int state) {
     if (vtkWidget_) vtkWidget_->setWireframe(state == Qt::Checked);
 }
 void MainWindow::onResCheckInvertChanged(int state) {
-    if (!currentCloud_ || currentCloud_->empty()) return;
-    // 反转所有点的 Z 值
-    for (auto& pt : currentCloud_->points)
-        pt.z = -pt.z;
-    vtkWidget_->updateCloud(currentCloud_);
+    auto* entry = selectedEntry();
+    if (!entry || !entry->cloud || entry->cloud->empty()) {
+        // Fallback to legacy currentCloud_
+        if (!currentCloud_ || currentCloud_->empty()) return;
+        for (auto& pt : currentCloud_->points) pt.z = -pt.z;
+        vtkWidget_->updateCloud(currentCloud_);
+        return;
+    }
+    for (auto& pt : entry->cloud->points) pt.z = -pt.z;
+    currentCloud_ = entry->cloud;
+    vtkWidget_->addOrUpdateCloud(entry->id, entry->cloud, entry->heightColored);
 }
 
 // ============================================================
@@ -1052,14 +1097,30 @@ void MainWindow::onPcBtnImportCloudClicked() {
     for (const auto& path : paths) {
         try {
             auto cloud = tp::PointCloudIO::load(path.toStdString());
-            currentCloud_ = xyzToRgb(cloud);
-            vtkWidget_->updateCloud(currentCloud_);
+            auto rgbCloud = xyzToRgb(cloud);
             QFileInfo fi(path);
+
+            std::string id = generateCloudId();
+            tp::CloudEntry entry;
+            entry.id = id;
+            entry.name = fi.fileName().toStdString();
+            entry.filePath = path.toStdString();
+            entry.cloud = rgbCloud;
+            entry.visible = true;
+            entry.heightColored = false;
+            cloudStore_[id] = entry;
+
+            currentCloud_ = rgbCloud;
+            vtkWidget_->addOrUpdateCloud(id, rgbCloud, false);
+
             auto* item = new QListWidgetItem(fi.fileName());
-            item->setData(Qt::UserRole, path);
+            item->setData(Qt::UserRole, QString::fromStdString(id));
             item->setToolTip(path);
+            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+            item->setCheckState(Qt::Checked);
             ui->pcCloudListWidget->addItem(item);
             ui->pcCloudListWidget->setCurrentItem(item);
+
             appendLog(QStringLiteral("导入点云: ") + fi.fileName() +
                 QStringLiteral(" (%1 点)").arg(cloud->size()));
         } catch (const std::exception& e) {
@@ -1088,52 +1149,168 @@ void MainWindow::onPcCloudListContextMenu(const QPoint& pos) {
     if (!chosen) return;
 
     if (chosen == actDelete && item) {
+        std::string id = item->data(Qt::UserRole).toString().toStdString();
+        cloudStore_.erase(id);
+        vtkWidget_->removeCloud(id);
+        if (selectedCloudId_ == id) { selectedCloudId_.clear(); currentCloud_.reset(); }
         delete ui->pcCloudListWidget->takeItem(
             ui->pcCloudListWidget->row(item));
         appendLog(QStringLiteral("已删除点云"));
     } else if (chosen == actDeleteAll) {
         ui->pcCloudListWidget->clear();
-        vtkWidget_->clearCloud();
+        cloudStore_.clear();
+        selectedCloudId_.clear();
+        vtkWidget_->removeAllClouds();
         currentCloud_.reset();
         appendLog(QStringLiteral("已删除全部点云"));
     } else if (chosen == actReload && item) {
-        QString path = item->data(Qt::UserRole).toString();
-        if (path.startsWith("__")) return;
+        std::string id = item->data(Qt::UserRole).toString().toStdString();
+        auto it = cloudStore_.find(id);
+        if (it == cloudStore_.end() || it->second.filePath.empty()) return;
         try {
-            currentCloud_ = xyzToRgb(tp::PointCloudIO::load(path.toStdString()));
-            vtkWidget_->updateCloud(currentCloud_);
-            appendLog(QStringLiteral("重新加载: ") + QFileInfo(path).fileName());
+            auto cloud = xyzToRgb(tp::PointCloudIO::load(it->second.filePath));
+            it->second.cloud = cloud;
+            currentCloud_ = cloud;
+            vtkWidget_->addOrUpdateCloud(id, cloud, it->second.heightColored);
+            appendLog(QStringLiteral("重新加载: ") +
+                QString::fromStdString(it->second.name));
         } catch (const std::exception& e) {
             appendLog(QStringLiteral("重新加载失败: ") + e.what());
         }
     } else if (chosen == actShowInVtk && item) {
-        QString path = item->data(Qt::UserRole).toString();
-        if (path.startsWith("__")) {
-            if (currentCloud_) vtkWidget_->updateCloud(currentCloud_);
-            return;
-        }
-        try {
-            currentCloud_ = xyzToRgb(tp::PointCloudIO::load(path.toStdString()));
-            vtkWidget_->updateCloud(currentCloud_);
-        } catch (const std::exception& e) {
-            appendLog(QStringLiteral("加载失败: ") + e.what());
+        QString cloudId = item->data(Qt::UserRole).toString();
+        std::string id = cloudId.toStdString();
+        auto it = cloudStore_.find(id);
+        if (it != cloudStore_.end()) {
+            currentCloud_ = it->second.cloud;
+            vtkWidget_->showBoundingBox(id);
         }
     }
 }
 
+void MainWindow::onPcCloudListItemChanged(QListWidgetItem* item) {
+    if (!item) return;
+    std::string id = item->data(Qt::UserRole).toString().toStdString();
+    bool visible = (item->checkState() == Qt::Checked);
+    auto it = cloudStore_.find(id);
+    if (it != cloudStore_.end()) {
+        it->second.visible = visible;
+        vtkWidget_->setCloudVisible(id, visible);
+    }
+}
+
+void MainWindow::onPcCloudListCurrentChanged(QListWidgetItem* current, QListWidgetItem*) {
+    if (!current) {
+        selectedCloudId_.clear();
+        vtkWidget_->hideBoundingBox();
+        return;
+    }
+    std::string id = current->data(Qt::UserRole).toString().toStdString();
+    auto it = cloudStore_.find(id);
+    if (it == cloudStore_.end()) return;
+
+    // Only select checked items
+    if (!it->second.visible) {
+        vtkWidget_->hideBoundingBox();
+        return;
+    }
+
+    selectedCloudId_ = id;
+    currentCloud_ = it->second.cloud;
+    vtkWidget_->showBoundingBox(id);
+
+    // Sync height color checkbox
+    ui->pcCheckHeightColor->blockSignals(true);
+    ui->pcCheckHeightColor->setChecked(it->second.heightColored);
+    ui->pcCheckHeightColor->blockSignals(false);
+}
+
+void MainWindow::onPcCheckHeightColorChanged(int state) {
+    auto* entry = selectedEntry();
+    if (!entry || !entry->cloud) return;
+    bool heightColored = (state == Qt::Checked);
+    entry->heightColored = heightColored;
+    vtkWidget_->setCloudHeightColored(entry->id, entry->cloud, heightColored);
+}
+
 void MainWindow::onPcBtnCropROIClicked() {
-    appendLog(QStringLiteral("ROI 裁剪功能开发中"));
+    if (!vtkWidget_) return;
+    if (vtkWidget_->isROICropEnabled()) {
+        vtkWidget_->enableROICrop(false);
+        appendLog(QStringLiteral("ROI 裁剪模式已关闭"));
+    } else {
+        if (cloudStore_.empty() && !currentCloud_) {
+            appendLog(QStringLiteral("请先导入或重建点云"));
+            return;
+        }
+        vtkWidget_->enableROICrop(true, false);
+        appendLog(QStringLiteral("ROI 裁剪模式已开启 (WASD平移/QE升降/滚轮缩放/R重置/1AABB/2OBB/C裁剪)"));
+    }
+}
+
+void MainWindow::performROICrop() {
+    auto* entry = selectedEntry();
+    if (!entry || !entry->cloud || entry->cloud->empty()) {
+        appendLog(QStringLiteral("请先选中点云"));
+        return;
+    }
+
+    double bounds[6];
+    vtkWidget_->getROITransform(bounds);
+
+    auto src = entry->cloud;
+    auto cropped = std::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+    for (const auto& pt : src->points) {
+        if (pt.x >= bounds[0] && pt.x <= bounds[1] &&
+            pt.y >= bounds[2] && pt.y <= bounds[3] &&
+            pt.z >= bounds[4] && pt.z <= bounds[5]) {
+            cropped->push_back(pt);
+        }
+    }
+
+    if (cropped->empty()) {
+        appendLog(QStringLiteral("裁剪结果为空"));
+        return;
+    }
+
+    // Color cropped points green
+    for (auto& pt : cropped->points) {
+        pt.r = 100; pt.g = 255; pt.b = 100;
+    }
+
+    std::string id = generateCloudId();
+    tp::CloudEntry newEntry;
+    newEntry.id = id;
+    newEntry.name = "ROI_crop_" + std::to_string(cloudIdCounter_);
+    newEntry.cloud = cropped;
+    newEntry.visible = true;
+    cloudStore_[id] = newEntry;
+
+    currentCloud_ = cropped;
+    vtkWidget_->addOrUpdateCloud(id, cropped, false);
+
+    auto* item = new QListWidgetItem(QString::fromStdString(newEntry.name));
+    item->setData(Qt::UserRole, QString::fromStdString(id));
+    item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    item->setCheckState(Qt::Checked);
+    ui->pcCloudListWidget->addItem(item);
+    ui->pcCloudListWidget->setCurrentItem(item);
+
+    vtkWidget_->enableROICrop(false);
+    appendLog(QStringLiteral("ROI 裁剪完成: %1 点").arg(cropped->size()));
 }
 void MainWindow::onPcBtnCropPlaneClicked() {
     appendLog(QStringLiteral("平面裁剪功能开发中"));
 }
 void MainWindow::onPcBtnSubsampleClicked() {
-    if (!currentCloud_ || currentCloud_->empty()) {
+    auto* entry = selectedEntry();
+    auto cloud = entry ? entry->cloud : currentCloud_;
+    if (!cloud || cloud->empty()) {
         appendLog(QStringLiteral("请先导入或重建点云")); return;
     }
     float leafSize = static_cast<float>(ui->pcSpinVoxelSize->value());
-    auto cloud = currentCloud_;
-    std::thread([this, cloud, leafSize]() {
+    std::string entryId = entry ? entry->id : "";
+    std::thread([this, cloud, leafSize, entryId]() {
         try {
             tp::PointCloudFilter f;
             auto xyzIn = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
@@ -1141,9 +1318,18 @@ void MainWindow::onPcBtnSubsampleClicked() {
                 xyzIn->push_back({p.x, p.y, p.z});
             auto filtered = f.voxelGrid(xyzIn, leafSize);
             auto rgbOut = xyzToRgb(filtered);
-            QMetaObject::invokeMethod(this, [this, rgbOut]() {
+            QMetaObject::invokeMethod(this, [this, rgbOut, entryId]() {
                 currentCloud_ = rgbOut;
-                vtkWidget_->updateCloud(rgbOut);
+                if (!entryId.empty()) {
+                    auto it = cloudStore_.find(entryId);
+                    if (it != cloudStore_.end()) {
+                        it->second.cloud = rgbOut;
+                        vtkWidget_->addOrUpdateCloud(entryId, rgbOut,
+                            it->second.heightColored);
+                    }
+                } else {
+                    vtkWidget_->updateCloud(rgbOut);
+                }
                 appendLog(QStringLiteral("体素降采样完成: %1 点").arg(rgbOut->size()));
             }, Qt::QueuedConnection);
         } catch (const std::exception& e) {
@@ -1160,13 +1346,15 @@ void MainWindow::onPcBtnDuplicateClicked() {
     appendLog(QStringLiteral("去除重复点功能开发中"));
 }
 void MainWindow::onPcBtnSORClicked() {
-    if (!currentCloud_ || currentCloud_->empty()) {
+    auto* entry = selectedEntry();
+    auto cloud = entry ? entry->cloud : currentCloud_;
+    if (!cloud || cloud->empty()) {
         appendLog(QStringLiteral("请先导入或重建点云")); return;
     }
     int meanK = ui->pcSpinSORK->value();
     double stdDev = ui->pcSpinSORStd->value();
-    auto cloud = currentCloud_;
-    std::thread([this, cloud, meanK, stdDev]() {
+    std::string entryId = entry ? entry->id : "";
+    std::thread([this, cloud, meanK, stdDev, entryId]() {
         try {
             tp::PointCloudFilter f;
             auto xyzIn = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
@@ -1174,9 +1362,18 @@ void MainWindow::onPcBtnSORClicked() {
                 xyzIn->push_back({p.x, p.y, p.z});
             auto filtered = f.SOR(xyzIn, meanK, stdDev);
             auto rgbOut = xyzToRgb(filtered);
-            QMetaObject::invokeMethod(this, [this, rgbOut]() {
+            QMetaObject::invokeMethod(this, [this, rgbOut, entryId]() {
                 currentCloud_ = rgbOut;
-                vtkWidget_->updateCloud(rgbOut);
+                if (!entryId.empty()) {
+                    auto it = cloudStore_.find(entryId);
+                    if (it != cloudStore_.end()) {
+                        it->second.cloud = rgbOut;
+                        vtkWidget_->addOrUpdateCloud(entryId, rgbOut,
+                            it->second.heightColored);
+                    }
+                } else {
+                    vtkWidget_->updateCloud(rgbOut);
+                }
                 appendLog(QStringLiteral("SOR完成: %1 点").arg(rgbOut->size()));
             }, Qt::QueuedConnection);
         } catch (const std::exception& e) {
@@ -1275,7 +1472,9 @@ void MainWindow::onPcBtnViewResetClicked() {
     if (vtkWidget_) vtkWidget_->resetCamera();
 }
 void MainWindow::onPcBtnExportPLYClicked() {
-    if (!currentCloud_ || currentCloud_->empty()) { appendLog(QStringLiteral("没有点云")); return; }
+    auto* entry = selectedEntry();
+    auto cloud = entry ? entry->cloud : currentCloud_;
+    if (!cloud || cloud->empty()) { appendLog(QStringLiteral("没有点云")); return; }
     auto path = QFileDialog::getSaveFileName(this, QStringLiteral("导出PLY"), {}, "PLY(*.ply)");
     if (path.isEmpty()) return;
     try {
@@ -1353,8 +1552,11 @@ void MainWindow::onBgaBtnStartClicked() {
         try {
             tp::BGADetector detector;
             std::vector<double> coplanarities;
-            cv::Mat lastBrightImg;
-            std::vector<cv::Vec3f> lastBalls2D;
+            std::vector<tp::BallResult> lastResults;
+            cv::Mat lastImage;
+            Eigen::Vector3d lastNormal{0, 0, -1};
+            double lastD = 0;
+            int lastNumRows = 0;
 
             for (int i = 1; i <= count; ++i) {
                 emit bgaLogMessage(QStringLiteral("处理第 %1/%2 次测量...")
@@ -1368,12 +1570,11 @@ void MainWindow::onBgaBtnStartClicked() {
                     continue;
                 }
 
+                // Load point cloud for Z matrix
                 std::string cloudPath;
                 namespace fs = std::filesystem;
                 if (fs::exists(fs::u8path(cloudFolder + "/" + std::to_string(i) + ".ply")))
                     cloudPath = cloudFolder + "/" + std::to_string(i) + ".ply";
-                else if (fs::exists(fs::u8path(cloudFolder + "/" + std::to_string(i) + ".txt")))
-                    cloudPath = cloudFolder + "/" + std::to_string(i) + ".txt";
                 else
                     cloudPath = cloudFolder + "/" + std::to_string(i) + ".pcd";
 
@@ -1382,42 +1583,68 @@ void MainWindow::onBgaBtnStartClicked() {
                     cloud = tp::PointCloudIO::load(cloudPath);
                 } catch (const std::exception& ex) {
                     emit bgaLogMessage(QStringLiteral("无法加载点云 %1: %2")
-                        .arg(QString::fromStdString(cloudPath))
-                        .arg(ex.what()));
+                        .arg(QString::fromStdString(cloudPath)).arg(ex.what()));
                     continue;
                 }
-                if (!cloud || cloud->empty()) {
-                    emit bgaLogMessage(QStringLiteral("点云 %1 为空, 跳过")
-                        .arg(QString::fromStdString(cloudPath)));
-                    continue;
+                if (!cloud || cloud->empty()) continue;
+
+                // Build Z matrix from ordered point cloud
+                int rows = brightImg.rows, cols = brightImg.cols;
+                cv::Mat Z(rows, cols, CV_64F, cv::Scalar(0));
+                if (static_cast<int>(cloud->size()) == rows * cols) {
+                    for (int r = 0; r < rows; ++r)
+                        for (int c = 0; c < cols; ++c)
+                            Z.at<double>(r, c) = (*cloud)[r * cols + c].z;
                 }
 
-                cv::Mat mask = cv::Mat::ones(brightImg.size(), CV_8U) * 255;
-                auto balls2D = detector.detect2DBalls(brightImg, mask);
+                // Use calibration X/Y matrices
+                cv::Mat X = calib.X, Y = calib.Y;
+                if (X.empty() || Y.empty()) {
+                    // Fallback: build from ordered cloud
+                    X = cv::Mat(rows, cols, CV_64F);
+                    Y = cv::Mat(rows, cols, CV_64F);
+                    for (int r = 0; r < rows; ++r)
+                        for (int c = 0; c < cols; ++c) {
+                            X.at<double>(r, c) = (*cloud)[r * cols + c].x;
+                            Y.at<double>(r, c) = (*cloud)[r * cols + c].y;
+                        }
+                }
+
+                tp::BGAConfig config;
+                auto results = detector.runAllDealTwoplane(brightImg, X, Y, Z, config);
                 emit bgaLogMessage(QStringLiteral("检测到 %1 个焊球 (第 %2 次)")
-                    .arg(balls2D.size()).arg(i));
+                    .arg(results.size()).arg(i));
 
-                tp::CalibData singleCalib;
-                singleCalib.X = calib.X;
-                singleCalib.Y = calib.Y;
-                singleCalib.allK_i = calib.allK_i1;
-                singleCalib.isValid = true;
-                auto balls3D = detector.localize3DBalls(cloud, balls2D, singleCalib);
-                emit bgaLogMessage(QStringLiteral("3D定位 %1 个焊球").arg(balls3D.size()));
-
-                if (balls3D.size() < 3) {
-                    emit bgaLogMessage(QStringLiteral("第 %1 次3D焊球不足3个, 跳过共面度计算").arg(i));
+                if (results.size() < 3) {
+                    emit bgaLogMessage(QStringLiteral("第 %1 次焊球不足3个, 跳过共面度计算").arg(i));
                     continue;
                 }
-                double cop = detector.calcCoplanarity(balls3D);
+
+                // Compute coplanarity from heights
+                double maxH = 0, minH = 1e9;
+                for (const auto& b : results) {
+                    if (!b.success) continue;
+                    if (b.height > maxH) maxH = b.height;
+                    if (b.height < minH) minH = b.height;
+                }
+                double cop = maxH - minH;
                 coplanarities.push_back(cop);
                 emit bgaLogMessage(QStringLiteral("第 %1 次共面度 = %2 mm")
                     .arg(i).arg(cop, 0, 'f', 4));
 
-                lastBrightImg = brightImg.clone();
-                lastBalls2D = balls2D;
+                lastResults = results;
+                lastImage = brightImg.clone();
+                lastNormal = detector.getSubstrateNormal();
+                lastD = detector.getSubstrateD();
+
+                // Count rows
+                int maxRow = 0;
+                for (const auto& b : results)
+                    if (b.row > maxRow) maxRow = b.row;
+                lastNumRows = maxRow + 1;
             }
 
+            // Build result text
             QString resultText;
             for (int i = 0; i < static_cast<int>(coplanarities.size()); ++i) {
                 resultText += QStringLiteral("测量 %1: 共面度 = %2 mm\n")
@@ -1430,26 +1657,65 @@ void MainWindow::onBgaBtnStartClicked() {
                 resultText += QStringLiteral("\n平均共面度 = %1 mm\n").arg(avg, 0, 'f', 4);
             }
 
-            QImage ballShowImg;
-            if (!lastBrightImg.empty() && !lastBalls2D.empty()) {
-                cv::Mat colorShow;
-                cv::cvtColor(lastBrightImg, colorShow, cv::COLOR_GRAY2RGB);
-                for (const auto& b : lastBalls2D) {
-                    cv::circle(colorShow, cv::Point(static_cast<int>(b[0]),
-                        static_cast<int>(b[1])), static_cast<int>(b[2]),
-                        cv::Scalar(0, 255, 0), 2);
-                }
-                cv::Mat rgb = colorShow.clone();
-                ballShowImg = QImage(rgb.data, rgb.cols, rgb.rows,
-                    static_cast<int>(rgb.step), QImage::Format_RGB888).copy();
+            // Add per-ball data table
+            resultText += QStringLiteral("\n--- 焊球详细数据 ---\n");
+            resultText += QStringLiteral("编号\t高度(mm)\t行号\tX3D\tY3D\tZ3D\n");
+            for (const auto& b : lastResults) {
+                if (!b.success) continue;
+                resultText += QStringLiteral("%1\t%2\t%3\t%4\t%5\t%6\n")
+                    .arg(b.order)
+                    .arg(b.height, 0, 'f', 4)
+                    .arg(b.row)
+                    .arg(b.x3d, 0, 'f', 3)
+                    .arg(b.y3d, 0, 'f', 3)
+                    .arg(b.z3d, 0, 'f', 3);
             }
 
-            QMetaObject::invokeMethod(this, [this, resultText, coplanarities, ballShowImg]() {
+            // Generate charts
+            std::vector<double> heights;
+            std::vector<int> orders;
+            for (const auto& b : lastResults) {
+                if (!b.success) continue;
+                heights.push_back(b.height);
+                orders.push_back(b.order);
+            }
+
+            QPixmap barPix, histPix, ballPix;
+            if (!heights.empty()) {
+                barPix = tp::ChartRenderer::matToPixmap(
+                    tp::ChartRenderer::renderBarChart(heights, orders));
+                histPix = tp::ChartRenderer::matToPixmap(
+                    tp::ChartRenderer::renderHistogram(heights));
+            }
+            if (!lastImage.empty() && !lastResults.empty()) {
+                ballPix = tp::ChartRenderer::matToPixmap(
+                    tp::ChartRenderer::renderBallOverlay(lastImage, lastResults));
+            }
+
+            QMetaObject::invokeMethod(this, [this, resultText, coplanarities,
+                    barPix, histPix, ballPix, lastResults, lastImage,
+                    lastNormal, lastD, lastNumRows]() {
                 bgaCoplanarities_ = coplanarities;
+                lastBgaResults_ = lastResults;
+                lastBgaImage_ = lastImage;
+                lastSubstrateNormal_ = lastNormal;
+                lastSubstrateD_ = lastD;
+                lastBgaNumRows_ = lastNumRows;
+
                 ui->bgaDataText->setPlainText(resultText);
-                if (!ballShowImg.isNull())
-                    ui->bgaBallLabel->setPixmap(QPixmap::fromImage(ballShowImg).scaled(
-                        ui->bgaBallLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                if (!ballPix.isNull())
+                    ui->bgaBallLabel->setPixmap(ballPix.scaled(
+                        ui->bgaBallLabel->size(), Qt::KeepAspectRatio,
+                        Qt::SmoothTransformation));
+                if (!barPix.isNull())
+                    ui->bgaBarLabel->setPixmap(barPix.scaled(
+                        ui->bgaBarLabel->size(), Qt::KeepAspectRatio,
+                        Qt::SmoothTransformation));
+                if (!histPix.isNull())
+                    ui->bgaLineLabel->setPixmap(histPix.scaled(
+                        ui->bgaLineLabel->size(), Qt::KeepAspectRatio,
+                        Qt::SmoothTransformation));
+
                 ui->bgaBtnStart->setEnabled(true);
                 appendBgaLog(QStringLiteral("测量完成"));
             }, Qt::QueuedConnection);
@@ -1463,10 +1729,25 @@ void MainWindow::onBgaBtnStartClicked() {
     }).detach();
 }
 void MainWindow::onBgaBtnPlotClicked() {
-    appendBgaLog(QStringLiteral("绘图功能开发中"));
+    if (lastBgaResults_.empty()) {
+        appendBgaLog(QStringLiteral("请先执行测量"));
+        return;
+    }
+    vtkWidget_->showBgaScatter(lastBgaResults_, lastSubstrateNormal_, lastSubstrateD_);
+    appendBgaLog(QStringLiteral("3D 散点图已显示"));
 }
 void MainWindow::onBgaBtnBallShowClicked() {
-    appendBgaLog(QStringLiteral("焊球显示功能开发中"));
+    if (lastBgaResults_.empty() || lastBgaImage_.empty()) {
+        appendBgaLog(QStringLiteral("请先执行测量"));
+        return;
+    }
+    auto orderOverlay = tp::ChartRenderer::renderOrderOverlay(
+        lastBgaImage_, lastBgaResults_, lastBgaNumRows_);
+    auto pix = tp::ChartRenderer::matToPixmap(orderOverlay);
+    if (!pix.isNull())
+        ui->bgaBallLabel->setPixmap(pix.scaled(
+            ui->bgaBallLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    appendBgaLog(QStringLiteral("焊球编号标注已显示"));
 }
 void MainWindow::onBgaBtnImportClicked() {
     auto path = QFileDialog::getOpenFileName(this,
@@ -1475,7 +1756,27 @@ void MainWindow::onBgaBtnImportClicked() {
     appendBgaLog(QStringLiteral("数据导入: ") + path);
 }
 void MainWindow::onBgaBtnSaveClicked() {
-    appendBgaLog(QStringLiteral("导出功能开发中"));
+    if (lastBgaResults_.empty()) {
+        appendBgaLog(QStringLiteral("请先执行测量"));
+        return;
+    }
+    auto path = QFileDialog::getSaveFileName(this,
+        QStringLiteral("导出BGA测量结果"), {}, "CSV (*.csv)");
+    if (path.isEmpty()) return;
+
+    try {
+        std::ofstream ofs(std::filesystem::u8path(path.toStdString()));
+        ofs << "order,xc,yc,radius,x3d,y3d,z3d,height,row,success\n";
+        for (const auto& b : lastBgaResults_) {
+            ofs << b.order << "," << b.xc << "," << b.yc << ","
+                << b.radius << "," << b.x3d << "," << b.y3d << ","
+                << b.z3d << "," << b.height << "," << b.row << ","
+                << (b.success ? 1 : 0) << "\n";
+        }
+        appendBgaLog(QStringLiteral("已导出: ") + path);
+    } catch (const std::exception& e) {
+        appendBgaLog(QStringLiteral("导出失败: ") + e.what());
+    }
 }
 
 void MainWindow::onBgaBtnImgFolderBrowseClicked() {

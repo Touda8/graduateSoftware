@@ -57,6 +57,16 @@ struct ReconResult {
     std::string errorMsg;
 };
 
+// 点云条目（多云管理用）
+struct CloudEntry {
+    std::string id;          // 唯一标识
+    std::string name;        // 显示名
+    std::string filePath;    // 源文件路径（可空）
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
+    bool visible = true;
+    bool heightColored = false;
+};
+
 // BGA 测量结果
 struct BGAMeasureResult {
     std::vector<Eigen::Vector3d> ballPositions;

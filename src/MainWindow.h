@@ -8,14 +8,19 @@
 #include "reconstruction/ReconstructionPipeline.h"
 #include "pointcloud/PointCloudIO.h"
 #include "pointcloud/PointCloudFilter.h"
+#include "measurement/BGADetector.h"
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <opencv2/core.hpp>
+#include <Eigen/Core>
 #include <thread>
+#include <map>
 
 // forward declarations
 namespace Ui { class twoProjectorClass; }
 namespace tp { class VtkWidget; }
 class ProjectorManager;
+class QListWidgetItem;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -79,6 +84,9 @@ private slots:
     // ---- 点云处理按钮 ----
     void onPcBtnImportCloudClicked();
     void onPcCloudListContextMenu(const QPoint& pos);
+    void onPcCloudListItemChanged(QListWidgetItem* item);
+    void onPcCloudListCurrentChanged(QListWidgetItem* current, QListWidgetItem* prev);
+    void onPcCheckHeightColorChanged(int state);
     void onPcBtnCropROIClicked();
     void onPcBtnCropPlaneClicked();
     void onPcBtnSubsampleClicked();
@@ -127,6 +135,9 @@ private slots:
     void onPcSpinTransYChanged(double val);
     void onPcSpinTransZChanged(double val);
 
+    // ---- ROI crop ----
+    void performROICrop();
+
     // ---- bgaWidget ----
     void onBgaSpinCountChanged(int val);
     void onBgaBtnStartClicked();
@@ -164,6 +175,10 @@ private:
     void startSingleReconstruction();
     void startMultiReconstruction();
 
+    // Multi-cloud helpers
+    std::string generateCloudId();
+    tp::CloudEntry* selectedEntry();
+
     Ui::twoProjectorClass* ui;
     State state_ = State::IDLE;
     tp::VtkWidget* vtkWidget_ = nullptr;
@@ -174,4 +189,16 @@ private:
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr currentCloud_;
     tp::PointCloudFilter filter_;
     std::vector<double> bgaCoplanarities_;
+
+    // Multi-cloud management
+    std::map<std::string, tp::CloudEntry> cloudStore_;
+    std::string selectedCloudId_;
+    int cloudIdCounter_ = 0;
+
+    // BGA results
+    std::vector<tp::BallResult> lastBgaResults_;
+    cv::Mat lastBgaImage_;
+    Eigen::Vector3d lastSubstrateNormal_{0, 0, -1};
+    double lastSubstrateD_ = 0;
+    int lastBgaNumRows_ = 0;
 };

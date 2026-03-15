@@ -83,6 +83,8 @@
     <ClCompile Include="src\measurement\BGADetector.cpp" />
     <ClCompile Include="src\measurement\BGAMeasurePipeline.cpp" />
     <ClCompile Include="src\visualization\VtkWidget.cpp" />
+    <ClCompile Include="src\visualization\ChartRenderer.cpp" />
+    <ClCompile Include="src\visualization\ROIInteractorStyle.cpp" />
     <ClCompile Include="src\moc_MainWindow.cpp" />
     <ClCompile Include="src\visualization\moc_VtkWidget.cpp" />
     <ClCompile Include="src\moc_ProjectorManager.cpp" />
@@ -104,6 +106,8 @@
     <ClInclude Include="src\measurement\BGAMeasurePipeline.h" />
     <ClInclude Include="src\MainWindow.h" />
     <ClInclude Include="src\visualization\VtkWidget.h" />
+    <ClInclude Include="src\visualization\ChartRenderer.h" />
+    <ClInclude Include="src\visualization\ROIInteractorStyle.h" />
     <ClInclude Include="src\reconstruction\CalibLoader.h" />
     <ClInclude Include="src\pointcloud\PointCloudFilter.h" />
     <ClInclude Include="src\pointcloud\PointCloudIO.h" />
