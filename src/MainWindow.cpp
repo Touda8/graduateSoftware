@@ -18,10 +18,20 @@
 #include <QFileInfo>
 #include <QListWidgetItem>
 #include <QCheckBox>
+#include <QDialog>
+#include <QFormLayout>
+#include <QGridLayout>
+#include <QRadioButton>
+#include <QButtonGroup>
+#include <QSpinBox>
+#include <QDialogButtonBox>
 #include <QMetaType>
 #include <QImage>
 #include <QPixmap>
 #include <QRegularExpression>
+#include <QPointer>
+#include <QTimer>
+#include <QStorageInfo>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <filesystem>
@@ -29,6 +39,7 @@
 #include <future>
 #include <numeric>
 #include <mutex>
+#include <atomic>
 #include "measurement/BGADetector.h"
 #include "measurement/BGAMeasurePipeline.h"
 #include "algorithm/picsrc/chart_bindgen.hpp"
@@ -54,10 +65,30 @@ public:
         return opened_;
     }
 
+    bool isCapturing() const {
+        std::lock_guard<std::mutex> lock(mtx_);
+        return grabbing_;
+    }
+
+    bool queryInfo(QString& sn, int& width, int& height, QString& err) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!opened_) { err = QStringLiteral("相机未连接"); return false; }
+        try {
+            sn = QString::fromLocal8Bit(dev_->GetDeviceInfo().GetSN().c_str());
+            width = static_cast<int>(remote_->GetIntFeature("Width")->GetValue());
+            height = static_cast<int>(remote_->GetIntFeature("Height")->GetValue());
+            return true;
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("读取相机信息失败: %1").arg(e.what());
+            return false;
+        }
+    }
+
     bool scan(QStringList& snList, QString& err) {
         std::lock_guard<std::mutex> lock(mtx_);
         if (!ensureInitUnlocked(err)) return false;
         try {
+            devices_.clear();
             IGXFactory::GetInstance().UpdateDeviceList(1000, devices_);
             snList.clear();
             for (auto& d : devices_) snList.push_back(QString::fromLocal8Bit(d.GetSN().c_str()));
@@ -75,6 +106,7 @@ public:
         std::lock_guard<std::mutex> lock(mtx_);
         if (!ensureInitUnlocked(err)) return false;
         try {
+            devices_.clear();
             IGXFactory::GetInstance().UpdateDeviceList(1000, devices_);
             if (devices_.empty()) {
                 err = QStringLiteral("未检测到相机设备");
@@ -122,6 +154,28 @@ public:
         Q_UNUSED(err);
         closeUnlocked();
         return true;
+    }
+
+    bool startCapture(QString& err) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if (!opened_) { err = QStringLiteral("相机未连接"); return false; }
+        return ensureStreamUnlocked(err) && ensureGrabUnlocked(err);
+    }
+
+    bool stopCapture(QString& err) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        Q_UNUSED(err);
+        try {
+            if (grabbing_) {
+                remote_->GetCommandFeature("AcquisitionStop")->Execute();
+                stream_->StopGrab();
+                grabbing_ = false;
+            }
+            return true;
+        } catch (CGalaxyException& e) {
+            err = QStringLiteral("停止采集失败: %1").arg(e.what());
+            return false;
+        }
     }
 
     bool applyTrigger(const QString& mode, const QString& source, QString& err) {
@@ -174,7 +228,7 @@ public:
         }
     }
 
-    bool captureOne(const QString& mode, const QString& source, cv::Mat& outMat, QString& err) {
+    bool captureOne(const QString& mode, const QString& source, cv::Mat& outMat, QString& err, int timeoutMs = 1500) {
         std::lock_guard<std::mutex> lock(mtx_);
         if (!opened_) { err = QStringLiteral("相机未连接"); return false; }
         if (!ensureStreamUnlocked(err)) return false;
@@ -186,7 +240,7 @@ public:
                 remote_->GetCommandFeature("TriggerSoftware")->Execute();
             }
 
-            CImageDataPointer frame = stream_->GetImage(1500);
+            CImageDataPointer frame = stream_->GetImage(timeoutMs);
             if (frame->GetStatus() != GX_FRAME_STATUS_SUCCESS) {
                 err = QStringLiteral("取帧超时或失败（请检查触发源/连线）");
                 return false;
@@ -247,7 +301,6 @@ private:
     }
 
     bool ensureGrabUnlocked(QString& err) {
-        Q_UNUSED(err);
         try {
             if (!grabbing_) {
                 stream_->StartGrab();
@@ -281,6 +334,11 @@ private:
                 opened_ = false;
             }
         } catch (...) {}
+        try { stream_ = CGXStreamPointer(); } catch (...) {}
+        try { remote_ = CGXFeatureControlPointer(); } catch (...) {}
+        try { local_ = CGXFeatureControlPointer(); } catch (...) {}
+        try { dev_ = CGXDevicePointer(); } catch (...) {}
+        devices_.clear();
     }
 
     mutable std::mutex mtx_;
@@ -317,6 +375,21 @@ cv::Mat imreadSafe(const std::string& utf8Path, int flags) {
     if (!ifs) return {};
     std::vector<uchar> buf(std::istreambuf_iterator<char>(ifs), {});
     return cv::imdecode(buf, flags);
+}
+
+bool imwriteSafe(const std::string& utf8Path, const cv::Mat& img) {
+    if (img.empty()) return false;
+    std::string ext = ".bmp";
+    auto pos = utf8Path.find_last_of('.');
+    if (pos != std::string::npos) {
+        ext = utf8Path.substr(pos);
+    }
+    std::vector<uchar> buf;
+    if (!cv::imencode(ext, img, buf)) return false;
+    std::ofstream ofs(std::filesystem::u8path(utf8Path), std::ios::binary);
+    if (!ofs) return false;
+    ofs.write(reinterpret_cast<const char*>(buf.data()), static_cast<std::streamsize>(buf.size()));
+    return static_cast<bool>(ofs);
 }
 
 // 统一的 Mat -> QImage 深拷贝转换，避免跨线程/临时数据生命周期问题
@@ -861,6 +934,92 @@ void MainWindow::setupProjectorManager() {
     projMgr_ = new ProjectorManager();
     auto camSvc = std::make_shared<DahengCameraService>();
 
+    struct CameraRuntimeState {
+        std::atomic_bool connected{ false };
+        std::atomic_bool capturing{ false };
+        std::atomic_bool stopLoop{ false };
+        std::atomic_bool fallbackSwitching{ false };
+        std::atomic_llong lastFrameMs{ 0 };
+        std::atomic_int triggerSeq{ 0 };
+        std::atomic_llong totalFrames{ 0 };
+        std::thread captureThread;
+        double fps = 0.0;
+        std::mutex statMtx;
+    };
+    auto camState = std::make_shared<CameraRuntimeState>();
+    auto trigModeOn = std::make_shared<std::atomic_bool>(ui->capComboTrigMode->currentText().compare("On", Qt::CaseInsensitive) == 0);
+    auto trigSrcCode = std::make_shared<std::atomic_int>(0); // 0=Software,1=Line0,2=Line1,3=Line2
+
+    struct AutoCaptureState {
+        std::mutex mtx;
+        bool enableSave = true;
+        QString imageFormat = "BMP";
+        int intervalMode = 0; // 0:按帧数 1:按时间
+        int intervalValue = 1;
+        int limitMode = 0; // 0:帧 1:秒 2:分钟
+        int maxFrameLimit = 0;
+        int maxTimeLimit = 0;
+        int activeProjector = 0; // 0:none 1:pro1 2:pro2
+        QString pro1Base;
+        QString pro2Base;
+        QString activeSessionDir;
+        int nextImageIndex = 1;
+        long long sessionStartMs = 0;
+        long long savedCount = 0;
+        long long sampledFrames = 0;
+        long long lastSavedFrameTotal = 0;
+        long long lastSavedMs = 0;
+    };
+    auto autoCapState = std::make_shared<AutoCaptureState>();
+    struct AutoCaptureUiHandles {
+        QPointer<QDialog> dlg;
+        QPointer<QTextEdit> log;
+        QPointer<QLabel> infoBuffer;
+        QPointer<QLabel> infoDisk;
+        QPointer<QLabel> infoTotal;
+        QPointer<QLineEdit> pro1Edit;
+        QPointer<QLineEdit> pro2Edit;
+        QPointer<QComboBox> fmtCombo;
+        QPointer<QSpinBox> intervalSpin;
+        QPointer<QRadioButton> byFrameRadio;
+        QPointer<QRadioButton> byTimeRadio;
+        QPointer<QSpinBox> maxFrameSpin;
+        QPointer<QSpinBox> maxTimeSpin;
+        QPointer<QRadioButton> limitFrameRadio;
+        QPointer<QRadioButton> limitSecRadio;
+        QPointer<QRadioButton> limitMinRadio;
+        QPointer<QCheckBox> saveEnableCheck;
+    };
+    auto autoUi = std::make_shared<AutoCaptureUiHandles>();
+
+    auto currentMs = []() -> long long {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
+
+    auto appendAutoLog = [this, autoUi](const QString& msg) {
+        if (!autoUi->log) return;
+        const QString line = QDateTime::currentDateTime().toString("[hh:mm:ss] ") + msg;
+        QMetaObject::invokeMethod(autoUi->log, [log = autoUi->log, line]() {
+            if (log) log->append(line);
+        }, Qt::QueuedConnection);
+    };
+
+    auto makeNextNumericSessionDir = [](const QString& baseDir) -> QString {
+        QDir base(baseDir);
+        if (!base.exists()) base.mkpath(".");
+        const QStringList dirs = base.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+        int mx = 0;
+        QRegularExpression re("^\\d+$");
+        for (const auto& d : dirs) {
+            if (re.match(d).hasMatch()) mx = std::max(mx, d.toInt());
+        }
+        const int next = mx + 1;
+        const QString child = QString::number(next);
+        base.mkpath(child);
+        return base.absoluteFilePath(child);
+    };
+
     auto parseNumber = [](const QString& text, double defVal) {
         QRegularExpression re("([-+]?\\d*\\.?\\d+)");
         auto m = re.match(text);
@@ -873,6 +1032,89 @@ void MainWindow::setupProjectorManager() {
     if (ui->capComboTrigSrc->findText("Line2", Qt::MatchExactly) < 0) {
         ui->capComboTrigSrc->addItem("Line2");
     }
+    ui->capComboTrigMode->setEnabled(false); // 触发模式只读，由联动逻辑自动控制
+
+    // 文件设置区域新增“自动采集”入口（非模态）
+    auto* autoCapBtn = new QPushButton(QStringLiteral("自动采集"), ui->capFileGroupBox);
+    autoCapBtn->setStyleSheet("QPushButton{background:#FFFFFF;color:#333333;border:1px solid #E5E5E5;padding:4px 10px;}"
+                              "QPushButton:hover{background:#F5F5F5;}");
+    if (ui->capFileRow) {
+        ui->capFileRow->addWidget(autoCapBtn);
+    }
+
+    // 左右布局按 40%/60% 调整
+    if (ui->capMainLayout) {
+        ui->capMainLayout->setStretch(0, 4);
+        ui->capMainLayout->setStretch(1, 6);
+    }
+
+    // 顶部状态栏：替换树形列表可视化
+    ui->capTreeWidget->hide();
+    auto* capConnLayout = ui->capConnLayout;
+    auto* camStatusLabel = new QLabel(QStringLiteral("● 相机状态：未连接"), ui->capConnGroupBox);
+    auto* projStatusLabel = new QLabel(QStringLiteral("● 投影仪总状态：未连接"), ui->capConnGroupBox);
+    auto* trigStatusLabel = new QLabel(QStringLiteral("● 当前触发模式：软触发"), ui->capConnGroupBox);
+    camStatusLabel->setStyleSheet("color:#808080;font-weight:600;");
+    projStatusLabel->setStyleSheet("color:#808080;font-weight:600;");
+    trigStatusLabel->setStyleSheet("color:#2F86F6;font-weight:600;");
+    capConnLayout->addWidget(camStatusLabel);
+    capConnLayout->addWidget(projStatusLabel);
+    capConnLayout->addWidget(trigStatusLabel);
+
+    // 相机独立按钮组（连接与采集分离）
+    auto* camBtnConnect = new QPushButton(QStringLiteral("连接相机"), ui->capParamGroupBox);
+    auto* camBtnDisconnect = new QPushButton(QStringLiteral("断开相机"), ui->capParamGroupBox);
+    auto* camBtnStart = new QPushButton(QStringLiteral("开启相机采集"), ui->capParamGroupBox);
+    auto* camBtnStop = new QPushButton(QStringLiteral("关闭相机采集"), ui->capParamGroupBox);
+    auto* camRow1 = new QHBoxLayout();
+    auto* camRow2 = new QHBoxLayout();
+    camRow1->addWidget(camBtnConnect);
+    camRow1->addWidget(camBtnDisconnect);
+    camRow2->addWidget(camBtnStart);
+    camRow2->addWidget(camBtnStop);
+    ui->capParamGrid->addLayout(camRow1, 6, 0, 1, 2);
+    ui->capParamGrid->addLayout(camRow2, 7, 0, 1, 2);
+
+    // 右侧顶部状态
+    auto* capTopStatus = new QLabel(QStringLiteral("相机分辨率：- | 帧率：0.00 fps | 累计帧数：0 | 当前触发模式：软触发"), ui->capWidget);
+    capTopStatus->setAlignment(Qt::AlignCenter);
+    capTopStatus->setStyleSheet("background:#F5F5F5;color:#333333;border:1px solid #D0D0D0;padding:4px;");
+    ui->capRightLayout->insertWidget(0, capTopStatus);
+
+    auto sourceCodeFromText = [](const QString& src) {
+        if (src.compare("Line0", Qt::CaseInsensitive) == 0) return 1;
+        if (src.compare("Line1", Qt::CaseInsensitive) == 0) return 2;
+        if (src.compare("Line2", Qt::CaseInsensitive) == 0) return 3;
+        return 0;
+    };
+    auto nowMs = []() -> long long {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
+    trigSrcCode->store(sourceCodeFromText(ui->capComboTrigSrc->currentText()));
+
+    auto updateCameraButtons = [this, camState, camBtnConnect, camBtnDisconnect, camBtnStart, camBtnStop, camStatusLabel]() {
+        const bool connected = camState->connected.load();
+        const bool capturing = camState->capturing.load();
+
+        camBtnConnect->setEnabled(!connected);
+        camBtnDisconnect->setEnabled(connected);
+        camBtnStart->setEnabled(connected && !capturing);
+        camBtnStop->setEnabled(connected && capturing);
+        ui->capBtnSoftTrigger->setEnabled(connected);
+
+        if (!connected) {
+            camStatusLabel->setText(QStringLiteral("● 相机状态：未连接"));
+            camStatusLabel->setStyleSheet("color:#808080;font-weight:600;");
+        } else if (capturing) {
+            camStatusLabel->setText(QStringLiteral("● 相机状态：已连接（采集中）"));
+            camStatusLabel->setStyleSheet("color:#00AA00;font-weight:700;");
+        } else {
+            camStatusLabel->setText(QStringLiteral("● 相机状态：已连接（未采集）"));
+            camStatusLabel->setStyleSheet("color:#00AA00;font-weight:600;");
+        }
+    };
+    updateCameraButtons();
 
     auto showPatternPreview = [this](int patternIndex) {
         cv::Mat img(720, 1280, CV_8UC3, cv::Scalar(240, 240, 240));
@@ -933,11 +1175,8 @@ void MainWindow::setupProjectorManager() {
 
         cv::putText(img, "Pattern Preview", cv::Point(20, 40),
             cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(60, 60, 60), 2, cv::LINE_AA);
-        QImage qimg = matToQImageCopy(img);
-        if (!qimg.isNull() && zoomCapShow_) {
-            zoomCapShow_->setImage(qimg);
-            appendCapLog(QStringLiteral("预览已更新: 测试图案 %1").arg(patternIndex));
-        }
+        Q_UNUSED(img);
+        appendCapLog(QStringLiteral("投影图案命令已下发（右侧仅显示相机画面），图案编号: %1").arg(patternIndex));
     };
 
     // ---- 连接管理按钮（带禁用防重复点击） ----
@@ -997,61 +1236,38 @@ void MainWindow::setupProjectorManager() {
                 appendCapLog(QStringLiteral("开始连接全部投影仪..."));
                 projMgr_->connectAll();
             });
-    connect(ui->capBtnAllConnect, &QPushButton::clicked,
-            this, [this, camSvc, parseNumber] {
-                const QString snText = ui->capEditSN->text();
-                const double exposureUs = parseNumber(ui->capEditExposure->text(), 30000.0);
-                const double frameRate = parseNumber(ui->capEditFramerate->text(), 20.0);
-                const QString trigMode = ui->capComboTrigMode->currentText();
-                const QString trigSrc = ui->capComboTrigSrc->currentText();
-                std::thread([this, camSvc, snText, exposureUs, frameRate, trigMode, trigSrc]() {
-                    QString actualSn, err;
-                    bool ok = camSvc->open(snText, actualSn, err);
-                    if (ok) {
-                        camSvc->setExposureUs(exposureUs, err);
-                        camSvc->setFrameRateHz(frameRate, err);
-                        camSvc->applyTrigger(trigMode, trigSrc, err);
-                    }
-                    QMetaObject::invokeMethod(this, [this, ok, actualSn, err]() {
-                        if (ok) {
-                            ui->capEditSN->setText(actualSn);
-                            appendCapLog(QStringLiteral("相机连接成功, SN=%1").arg(actualSn));
-                        } else {
-                            appendCapLog(QStringLiteral("相机连接失败: ") + err);
-                        }
-                    }, Qt::QueuedConnection);
-                }).detach();
-            });
     connect(ui->capBtnAllDisconnect, &QPushButton::clicked,
             this, [this] {
                 appendCapLog(QStringLiteral("开始断开全部投影仪..."));
                 projMgr_->disconnectAll();
             });
-    connect(ui->capBtnAllDisconnect, &QPushButton::clicked,
-            this, [this, camSvc] {
-                std::thread([this, camSvc]() {
-                    QString err;
-                    camSvc->close(err);
-                    QMetaObject::invokeMethod(this, [this]() {
-                        appendCapLog(QStringLiteral("相机已断开"));
-                    }, Qt::QueuedConnection);
-                }).detach();
-            });
 
     // ---- 相机参数应用 ----
     connect(ui->capComboTrigMode, &QComboBox::currentTextChanged,
-            this, [this, camSvc](const QString&) {
+            this, [this, camSvc, trigModeOn, trigStatusLabel, capTopStatus, camState](const QString& txt) {
+                trigModeOn->store(txt.compare("On", Qt::CaseInsensitive) == 0);
                 if (!camSvc->isOpen()) return;
                 QString err;
                 if (!camSvc->applyTrigger(ui->capComboTrigMode->currentText(), ui->capComboTrigSrc->currentText(), err))
                     appendCapLog(QStringLiteral("触发模式设置失败: ") + err);
+                else {
+                    trigStatusLabel->setText(QStringLiteral("● 当前触发模式：%1/%2").arg(ui->capComboTrigMode->currentText(), ui->capComboTrigSrc->currentText()));
+                    capTopStatus->setText(QStringLiteral("相机分辨率：- | 帧率：0.00 fps | 累计帧数：%1 | 当前触发模式：%2/%3")
+                        .arg(camState->totalFrames.load()).arg(ui->capComboTrigMode->currentText(), ui->capComboTrigSrc->currentText()));
+                }
             });
     connect(ui->capComboTrigSrc, &QComboBox::currentTextChanged,
-            this, [this, camSvc](const QString&) {
+            this, [this, camSvc, trigSrcCode, sourceCodeFromText, trigStatusLabel, capTopStatus, camState](const QString& txt) {
+                trigSrcCode->store(sourceCodeFromText(txt));
                 if (!camSvc->isOpen()) return;
                 QString err;
                 if (!camSvc->applyTrigger(ui->capComboTrigMode->currentText(), ui->capComboTrigSrc->currentText(), err))
                     appendCapLog(QStringLiteral("触发源设置失败: ") + err);
+                else {
+                    trigStatusLabel->setText(QStringLiteral("● 当前触发模式：%1/%2").arg(ui->capComboTrigMode->currentText(), ui->capComboTrigSrc->currentText()));
+                    capTopStatus->setText(QStringLiteral("相机分辨率：- | 帧率：0.00 fps | 累计帧数：%1 | 当前触发模式：%2/%3")
+                        .arg(camState->totalFrames.load()).arg(ui->capComboTrigMode->currentText(), ui->capComboTrigSrc->currentText()));
+                }
             });
     connect(ui->capEditExposure, &QLineEdit::editingFinished,
             this, [this, camSvc, parseNumber] {
@@ -1074,74 +1290,277 @@ void MainWindow::setupProjectorManager() {
                     appendCapLog(QStringLiteral("采集帧率已设置: %1 Hz").arg(hz, 0, 'f', 2));
             });
 
-    // ---- 相机软触发/抓图 ----
-    connect(ui->capBtnSoftTrigger, &QPushButton::clicked,
-            this, [this, camSvc, parseNumber] {
-                const QString snText = ui->capEditSN->text();
-                const double exposureUs = parseNumber(ui->capEditExposure->text(), 30000.0);
-                const double frameRate = parseNumber(ui->capEditFramerate->text(), 20.0);
-                const QString trigMode = ui->capComboTrigMode->currentText();
-                const QString trigSrc = ui->capComboTrigSrc->currentText();
-                const QString folderText = ui->capEditFolder->text();
-                std::thread([this, camSvc, snText, exposureUs, frameRate, trigMode, trigSrc, folderText]() {
-                    QString err;
-                    QString usedSn = snText;
-                    if (!camSvc->isOpen()) {
-                        QString actualSn;
-                        if (!camSvc->open(snText, actualSn, err)) {
-                            QMetaObject::invokeMethod(this, [this, err]() {
-                                appendCapLog(QStringLiteral("相机未连接且自动连接失败: ") + err);
-                            }, Qt::QueuedConnection);
-                            return;
+    // ---- 相机专用按钮（连接/采集解耦） ----
+    connect(camBtnConnect, &QPushButton::clicked, this, [this, camSvc, camState, parseNumber,
+            updateCameraButtons, trigStatusLabel, capTopStatus]() {
+        const QString snText = ui->capEditSN->text().trimmed();
+        const double exposureUs = parseNumber(ui->capEditExposure->text(), 30000.0);
+        const double frameRate = parseNumber(ui->capEditFramerate->text(), 20.0);
+        const QString trigMode = ui->capComboTrigMode->currentText();
+        const QString trigSrc = ui->capComboTrigSrc->currentText();
+        std::thread([this, camSvc, camState, snText, exposureUs, frameRate, trigMode, trigSrc,
+                     updateCameraButtons, trigStatusLabel, capTopStatus]() {
+            QString actualSn, err;
+            bool ok = camSvc->open(snText, actualSn, err);
+            if (ok) {
+                camSvc->setExposureUs(exposureUs, err);
+                camSvc->setFrameRateHz(frameRate, err);
+                camSvc->applyTrigger(trigMode, trigSrc, err);
+            }
+            QMetaObject::invokeMethod(this, [this, ok, actualSn, err, camState,
+                    updateCameraButtons, trigStatusLabel, capTopStatus, trigMode, trigSrc]() {
+                camState->connected.store(ok);
+                camState->capturing.store(false);
+                updateCameraButtons();
+                if (ok) {
+                    camState->totalFrames.store(0);
+                    camState->lastFrameMs.store(0);
+                    camState->triggerSeq.store(0);
+                    ui->capEditSN->setText(actualSn);
+                    appendCapLog(QStringLiteral("相机连接成功, SN=%1").arg(actualSn));
+                    trigStatusLabel->setText(QStringLiteral("● 当前触发模式：%1/%2").arg(trigMode, trigSrc));
+                    capTopStatus->setText(QStringLiteral("相机分辨率：- | 帧率：0.00 fps | 累计帧数：%1 | 当前触发模式：%2/%3")
+                        .arg(camState->totalFrames.load()).arg(trigMode, trigSrc));
+                } else {
+                    appendCapLog(QStringLiteral("相机连接失败: ") + err);
+                }
+            }, Qt::QueuedConnection);
+        }).detach();
+    });
+
+    connect(camBtnDisconnect, &QPushButton::clicked, this, [this, camSvc, camState,
+            updateCameraButtons, trigStatusLabel, capTopStatus]() {
+        camState->stopLoop.store(true);
+        camState->capturing.store(false);
+        if (camState->captureThread.joinable()) camState->captureThread.join();
+        std::thread([this, camSvc, camState, updateCameraButtons, trigStatusLabel, capTopStatus]() {
+            QString err;
+            camSvc->stopCapture(err);
+            camSvc->close(err);
+            QMetaObject::invokeMethod(this, [this, camState, updateCameraButtons, trigStatusLabel, capTopStatus]() {
+                camState->connected.store(false);
+                camState->capturing.store(false);
+                updateCameraButtons();
+                trigStatusLabel->setText(QStringLiteral("● 当前触发模式：软触发"));
+                capTopStatus->setText(QStringLiteral("相机分辨率：- | 帧率：0.00 fps | 累计帧数：%1 | 当前触发模式：软触发")
+                    .arg(camState->totalFrames.load()));
+                if (zoomCapShow_) zoomCapShow_->clearImage();
+                appendCapLog(QStringLiteral("相机已断开"));
+            }, Qt::QueuedConnection);
+        }).detach();
+    });
+
+            connect(camBtnStart, &QPushButton::clicked, this, [this, camSvc, camState,
+                updateCameraButtons, capTopStatus, trigStatusLabel, trigModeOn, trigSrcCode, nowMs,
+                autoCapState, appendAutoLog, currentMs]() {
+        if (!camState->connected.load()) return;
+        camState->stopLoop.store(false);
+        QString err;
+        if (!camSvc->startCapture(err)) {
+            appendCapLog(QStringLiteral("开启采集失败: ") + err);
+            return;
+        }
+
+        camState->capturing.store(true);
+        updateCameraButtons();
+        appendCapLog(QStringLiteral("相机采集已开启"));
+
+        if (camState->captureThread.joinable()) camState->captureThread.join();
+        camState->captureThread = std::thread([this, camSvc, camState, capTopStatus, trigStatusLabel, trigModeOn, trigSrcCode, nowMs,
+                               autoCapState, appendAutoLog, currentMs]() {
+            auto t0 = std::chrono::steady_clock::now();
+            int frameCount = 0;
+            int noFrameTick = 0;
+            while (!camState->stopLoop.load()) {
+                cv::Mat frame;
+                QString err;
+                const QString trigMode = trigModeOn->load() ? QStringLiteral("On") : QStringLiteral("Off");
+                const int srcCode = trigSrcCode->load();
+                const QString trigSrc = (srcCode == 1) ? QStringLiteral("Line0") :
+                                        (srcCode == 2) ? QStringLiteral("Line1") :
+                                        (srcCode == 3) ? QStringLiteral("Line2") : QStringLiteral("Software");
+                if (camSvc->captureOne(trigMode, trigSrc, frame, err, 300)) {
+                    ++frameCount;
+                    const long long total = camState->totalFrames.fetch_add(1) + 1;
+                    camState->lastFrameMs.store(nowMs());
+                    noFrameTick = 0;
+
+                    // 自动存图：仅硬触发（On + Line0）且激活了Pro路径时执行
+                    if (trigMode == QStringLiteral("On") && trigSrc == QStringLiteral("Line0")) {
+                        QString savePath;
+                        QString saveExt;
+                        bool shouldSave = false;
+                        bool hitLimit = false;
+                        {
+                            std::lock_guard<std::mutex> lk(autoCapState->mtx);
+                            if (autoCapState->enableSave && autoCapState->activeProjector != 0 && !autoCapState->activeSessionDir.isEmpty()) {
+                                const long long elapsedMs = std::max<long long>(0, currentMs() - autoCapState->sessionStartMs);
+                                bool limitOk = true;
+                                if (autoCapState->limitMode == 0 && autoCapState->maxFrameLimit > 0) {
+                                    limitOk = autoCapState->savedCount < autoCapState->maxFrameLimit;
+                                } else if (autoCapState->limitMode == 1 && autoCapState->maxTimeLimit > 0) {
+                                    limitOk = elapsedMs < (static_cast<long long>(autoCapState->maxTimeLimit) * 1000);
+                                } else if (autoCapState->limitMode == 2 && autoCapState->maxTimeLimit > 0) {
+                                    limitOk = elapsedMs < (static_cast<long long>(autoCapState->maxTimeLimit) * 60 * 1000);
+                                }
+
+                                if (!limitOk) {
+                                    hitLimit = true;
+                                    autoCapState->activeProjector = 0;
+                                } else {
+                                    autoCapState->sampledFrames++;
+                                    bool intervalOk = true;
+                                    if (autoCapState->intervalMode == 0) {
+                                        const int iv = std::max(1, autoCapState->intervalValue);
+                                        intervalOk = (autoCapState->sampledFrames % iv) == 0;
+                                    } else {
+                                        const int iv = std::max(1, autoCapState->intervalValue);
+                                        intervalOk = (autoCapState->lastSavedMs == 0) || ((currentMs() - autoCapState->lastSavedMs) >= (static_cast<long long>(iv) * 1000));
+                                    }
+
+                                    if (intervalOk) {
+                                        saveExt = autoCapState->imageFormat.trimmed().toLower();
+                                        if (saveExt != "bmp" && saveExt != "png" && saveExt != "jpg" && saveExt != "jpeg") {
+                                            saveExt = "bmp";
+                                        }
+                                        savePath = QDir(autoCapState->activeSessionDir)
+                                            .absoluteFilePath(QString("%1.%2").arg(autoCapState->nextImageIndex++).arg(saveExt));
+                                        shouldSave = true;
+                                    }
+                                }
+                            }
                         }
-                        usedSn = actualSn;
+
+                        if (hitLimit) {
+                            appendAutoLog(QStringLiteral("达到自动采集限制，停止当前Pro路径自动存图"));
+                        }
+                        if (shouldSave && !savePath.isEmpty()) {
+                            const bool ok = imwriteSafe(savePath.toStdString(), frame);
+                            if (ok) {
+                                {
+                                    std::lock_guard<std::mutex> lk(autoCapState->mtx);
+                                    autoCapState->savedCount++;
+                                    autoCapState->lastSavedMs = currentMs();
+                                    autoCapState->lastSavedFrameTotal = total;
+                                }
+                                appendAutoLog(savePath + QStringLiteral(" 保存成功"));
+                            } else {
+                                appendAutoLog(savePath + QStringLiteral(" 保存失败"));
+                            }
+                        }
                     }
 
-                    camSvc->setExposureUs(exposureUs, err);
-                    camSvc->setFrameRateHz(frameRate, err);
-                    if (!camSvc->applyTrigger(trigMode, trigSrc, err)) {
-                        QMetaObject::invokeMethod(this, [this, err]() {
-                            appendCapLog(QStringLiteral("触发参数应用失败: ") + err);
-                        }, Qt::QueuedConnection);
-                        return;
-                    }
-
-                    cv::Mat frame;
-                    if (!camSvc->captureOne(trigMode, trigSrc, frame, err)) {
-                        QMetaObject::invokeMethod(this, [this, err]() {
-                            appendCapLog(QStringLiteral("采集失败: ") + err);
-                        }, Qt::QueuedConnection);
-                        return;
-                    }
-
+                    auto now = std::chrono::steady_clock::now();
+                    double sec = std::chrono::duration<double>(now - t0).count();
+                    double fps = sec > 0.0 ? (frameCount / sec) : 0.0;
                     QImage qimg = matToQImageCopy(frame);
-                    QString savePath;
-                    {
-                        QString folder = folderText.trimmed();
-                        if (folder.isEmpty()) folder = QDir::currentPath() + "/data/capture";
-                        QDir d(folder);
-                        if (!d.exists()) d.mkpath(".");
-                        QString sn = usedSn.trimmed();
-                        if (sn.isEmpty()) sn = QStringLiteral("UnknownSN");
-                        savePath = d.absoluteFilePath(
-                            QString("%1_%2.png").arg(sn).arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz")));
-                    }
-                    if (!qimg.isNull()) qimg.save(savePath);
 
-                    QMetaObject::invokeMethod(this, [this, qimg, savePath, usedSn]() {
-                        if (!usedSn.isEmpty()) ui->capEditSN->setText(usedSn);
+                    QString sn; int w = 0, h = 0; QString infoErr;
+                    camSvc->queryInfo(sn, w, h, infoErr);
+
+                    QMetaObject::invokeMethod(this, [this, qimg, fps, w, h, trigMode, trigSrc, capTopStatus, trigStatusLabel, total]() {
                         if (!qimg.isNull() && zoomCapShow_) {
                             zoomCapShow_->setImage(qimg);
                         }
-                        appendCapLog(QStringLiteral("采集成功, 图像已保存: ") + savePath);
+                        capTopStatus->setText(QStringLiteral("相机分辨率：%1×%2 | 帧率：%3 fps | 累计帧数：%4 | 当前触发模式：%5/%6")
+                            .arg(w).arg(h).arg(fps, 0, 'f', 2).arg(total).arg(trigMode, trigSrc));
+                        trigStatusLabel->setText(QStringLiteral("● 当前触发模式：%1/%2").arg(trigMode, trigSrc));
                     }, Qt::QueuedConnection);
-                }).detach();
-            });
+                } else {
+                    ++noFrameTick;
+                    if (noFrameTick % 4 == 0) {
+                        QMetaObject::invokeMethod(this, [capTopStatus, trigMode, trigSrc, camState]() {
+                            QString t = capTopStatus->text();
+                            Q_UNUSED(t);
+                            capTopStatus->setText(QStringLiteral("相机分辨率：- | 帧率：0.00 fps | 累计帧数：%1 | 当前触发模式：%2/%3")
+                                .arg(camState->totalFrames.load()).arg(trigMode, trigSrc));
+                        }, Qt::QueuedConnection);
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                }
+            }
+        });
+    });
+
+    connect(camBtnStop, &QPushButton::clicked, this, [this, camSvc, camState, updateCameraButtons]() {
+        camState->stopLoop.store(true);
+        if (camState->captureThread.joinable()) camState->captureThread.join();
+        QString err;
+        camSvc->stopCapture(err);
+        camState->capturing.store(false);
+        updateCameraButtons();
+        appendCapLog(QStringLiteral("相机采集已关闭"));
+    });
+
+    // 单帧采集：仅保存，不刷新UI
+    connect(ui->capBtnSoftTrigger, &QPushButton::clicked, this, [this, camSvc, camState, parseNumber, capTopStatus] {
+        if (!camState->connected.load()) {
+            appendCapLog(QStringLiteral("请先连接相机"));
+            return;
+        }
+        const double exposureUs = parseNumber(ui->capEditExposure->text(), 30000.0);
+        const double frameRate = parseNumber(ui->capEditFramerate->text(), 20.0);
+        const QString trigMode = ui->capComboTrigMode->currentText();
+        const QString trigSrc = ui->capComboTrigSrc->currentText();
+        const QString folderText = ui->capEditFolder->text();
+        const QString sn = ui->capEditSN->text().trimmed();
+
+        std::thread([this, camSvc, camState, exposureUs, frameRate, trigMode, trigSrc, folderText, sn, capTopStatus]() {
+            QString err;
+            camSvc->setExposureUs(exposureUs, err);
+            camSvc->setFrameRateHz(frameRate, err);
+            camSvc->applyTrigger(trigMode, trigSrc, err);
+            cv::Mat frame;
+            if (!camSvc->captureOne(trigMode, trigSrc, frame, err, 1000)) {
+                QMetaObject::invokeMethod(this, [this, err]() {
+                    appendCapLog(QStringLiteral("单帧采集失败: ") + err);
+                }, Qt::QueuedConnection);
+                return;
+            }
+            QImage qimg = matToQImageCopy(frame);
+            const long long total = camState->totalFrames.fetch_add(1) + 1;
+            QString infoErr, infoSn; int w = 0, h = 0;
+            camSvc->queryInfo(infoSn, w, h, infoErr);
+            QString folder = folderText.trimmed();
+            if (folder.isEmpty()) folder = QDir::currentPath() + "/data/capture";
+            QDir d(folder);
+            if (!d.exists()) d.mkpath(".");
+            static std::atomic<int> seq{ 0 };
+            const int idx = ++seq;
+            const QString usedSn = sn.isEmpty() ? QStringLiteral("UnknownSN") : sn;
+            QString savePath = d.absoluteFilePath(
+                QString("%1_%2_%3.jpg").arg(usedSn).arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz")).arg(idx));
+            if (!qimg.isNull()) qimg.save(savePath);
+            QMetaObject::invokeMethod(this, [this, savePath, capTopStatus, total, w, h, trigMode, trigSrc]() {
+                capTopStatus->setText(QStringLiteral("相机分辨率：%1×%2 | 帧率：0.00 fps | 累计帧数：%3 | 当前触发模式：%4/%5")
+                    .arg(w).arg(h).arg(total).arg(trigMode, trigSrc));
+                appendCapLog(QStringLiteral("单帧采集-保存路径: ") + savePath);
+            }, Qt::QueuedConnection);
+        }).detach();
+    });
+
+    connect(this, &QObject::destroyed, this, [camState, camSvc]() {
+        camState->stopLoop.store(true);
+        camState->capturing.store(false);
+        if (camState->captureThread.joinable()) camState->captureThread.join();
+        QString err;
+        camSvc->stopCapture(err);
+        camSvc->close(err);
+    });
 
     // ---- 状态反馈信号 ----
     connect(projMgr_, &ProjectorManager::connectionStateChanged,
-            this, &MainWindow::updateProStatusLabel,
-            Qt::QueuedConnection);
+            this, [this, projStatusLabel](int idx, bool connected) {
+                updateProStatusLabel(idx, connected);
+                bool p1 = projMgr_->isConnected(0);
+                bool p2 = projMgr_->isConnected(1);
+                const bool any = p1 || p2;
+                projStatusLabel->setText(QStringLiteral("● 投影仪总状态：%1（Pro1:%2 Pro2:%3）")
+                    .arg(any ? QStringLiteral("已连接") : QStringLiteral("未连接"))
+                    .arg(p1 ? QStringLiteral("已连接") : QStringLiteral("未连接"))
+                    .arg(p2 ? QStringLiteral("已连接") : QStringLiteral("未连接")));
+                projStatusLabel->setStyleSheet(any ? "color:#00AA00;font-weight:600;" : "color:#808080;font-weight:600;");
+            }, Qt::QueuedConnection);
     connect(projMgr_, &ProjectorManager::statusMessage,
             this, &MainWindow::appendCapLog,
             Qt::QueuedConnection);
@@ -1150,11 +1569,7 @@ void MainWindow::setupProjectorManager() {
             Qt::QueuedConnection);
     connect(projMgr_, &ProjectorManager::deviceListUpdated,
             this, [this](QStringList list) {
-                QTreeWidgetItem* projParent = ui->capTreeWidget->topLevelItem(1);
-                if (!projParent) return;
-                for (int i = 0; i < projParent->childCount() && i < list.size(); ++i) {
-                    projParent->child(i)->setToolTip(0, list[i]);
-                }
+                appendCapLog(QStringLiteral("投影仪设备列表: ") + list.join(", "));
             }, Qt::QueuedConnection);
     connect(projMgr_, &ProjectorManager::operationFinished,
             this, [this] {
@@ -1216,7 +1631,8 @@ void MainWindow::setupProjectorManager() {
     });
 
     // ---- Pro1/Pro2 投射按钮（条纹投射） ----
-    connect(ui->capBtnPro1Trig, &QPushButton::clicked, this, [this, showPatternPreview] {
+        connect(ui->capBtnPro1Trig, &QPushButton::clicked, this, [this, showPatternPreview,
+            camSvc, camState, trigStatusLabel, capTopStatus, nowMs] {
         if (!projMgr_->isConnected(0)) {
             appendCapLog(QStringLiteral("错误: Pro1 未连接，请先扫描并连接设备"));
             return;
@@ -1224,8 +1640,61 @@ void MainWindow::setupProjectorManager() {
         appendCapLog(QStringLiteral("Pro1 开始条纹投射..."));
         projMgr_->startPatternSequence(0, true);
         showPatternPreview(ui->capComboProjPattern->currentIndex());
+
+        if (camState->connected.load() && !camState->fallbackSwitching.exchange(true)) {
+            const int seq = camState->triggerSeq.fetch_add(1) + 1;
+            const long long switchMs = nowMs();
+            std::thread([this, camSvc, camState, trigStatusLabel, capTopStatus, seq, switchMs]() {
+                QString err;
+                camSvc->applyTrigger("On", "Line0", err);
+                QMetaObject::invokeMethod(this, [this, trigStatusLabel]() {
+                    ui->capComboTrigMode->setCurrentText("On");
+                    ui->capComboTrigSrc->setCurrentText("Line0");
+                    trigStatusLabel->setText(QStringLiteral("● 当前触发模式：硬触发/Line0（切换中）"));
+                    trigStatusLabel->setStyleSheet("color:#D4A017;font-weight:700;");
+                    appendCapLog(QStringLiteral("触发模式切换: Pro1触发 → 相机切换为Line0硬触发"));
+                }, Qt::QueuedConnection);
+
+                // 持续监听外部硬触发：当 0.3s 无新帧即回退软触发
+                bool seenHardFrame = false;
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+                while (std::chrono::steady_clock::now() < deadline && camState->connected.load()) {
+                    if (camState->triggerSeq.load() != seq) {
+                        camState->fallbackSwitching.store(false);
+                        return;
+                    }
+                    const long long last = camState->lastFrameMs.load();
+                    const long long now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
+                    if (last > switchMs) {
+                        seenHardFrame = true;
+                        if ((now - last) > 300) {
+                            break; // 0.3s 无硬触发帧
+                        }
+                    } else if ((now - switchMs) > 300) {
+                        break; // 初始 0.3s 未收到硬触发
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+                }
+
+                camSvc->applyTrigger("On", "Software", err);
+                QMetaObject::invokeMethod(this, [this, trigStatusLabel, capTopStatus, seenHardFrame, camState]() {
+                    ui->capComboTrigMode->setCurrentText("On");
+                    ui->capComboTrigSrc->setCurrentText("Software");
+                    trigStatusLabel->setText(QStringLiteral("● 当前触发模式：软触发/Software"));
+                    trigStatusLabel->setStyleSheet("color:#2F86F6;font-weight:600;");
+                    appendCapLog(seenHardFrame
+                        ? QStringLiteral("检测到投射结束（0.3s无硬触发帧），自动切换为软触发；投影仪投射保持正常")
+                        : QStringLiteral("0.3s内未收到硬触发信号，自动切换为软触发；投影仪投射保持正常"));
+                    capTopStatus->setText(QStringLiteral("相机分辨率：- | 帧率：0.00 fps | 累计帧数：%1 | 当前触发模式：On/Software")
+                        .arg(camState->totalFrames.load()));
+                }, Qt::QueuedConnection);
+                camState->fallbackSwitching.store(false);
+            }).detach();
+        }
     });
-    connect(ui->capBtnPro2Trig, &QPushButton::clicked, this, [this, showPatternPreview] {
+    connect(ui->capBtnPro2Trig, &QPushButton::clicked, this, [this, showPatternPreview,
+            camSvc, camState, trigStatusLabel, capTopStatus, nowMs] {
         if (!projMgr_->isConnected(1)) {
             appendCapLog(QStringLiteral("错误: Pro2 未连接，请先扫描并连接设备"));
             return;
@@ -1233,6 +1702,57 @@ void MainWindow::setupProjectorManager() {
         appendCapLog(QStringLiteral("Pro2 开始条纹投射..."));
         projMgr_->startPatternSequence(1, true);
         showPatternPreview(ui->capComboProjPattern->currentIndex());
+
+        if (camState->connected.load() && !camState->fallbackSwitching.exchange(true)) {
+            const int seq = camState->triggerSeq.fetch_add(1) + 1;
+            const long long switchMs = nowMs();
+            std::thread([this, camSvc, camState, trigStatusLabel, capTopStatus, seq, switchMs]() {
+                QString err;
+                camSvc->applyTrigger("On", "Line0", err);
+                QMetaObject::invokeMethod(this, [this, trigStatusLabel]() {
+                    ui->capComboTrigMode->setCurrentText("On");
+                    ui->capComboTrigSrc->setCurrentText("Line0");
+                    trigStatusLabel->setText(QStringLiteral("● 当前触发模式：硬触发/Line0（切换中）"));
+                    trigStatusLabel->setStyleSheet("color:#D4A017;font-weight:700;");
+                    appendCapLog(QStringLiteral("触发模式切换: Pro2触发 → 相机切换为Line0硬触发"));
+                }, Qt::QueuedConnection);
+
+                bool seenHardFrame = false;
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+                while (std::chrono::steady_clock::now() < deadline && camState->connected.load()) {
+                    if (camState->triggerSeq.load() != seq) {
+                        camState->fallbackSwitching.store(false);
+                        return;
+                    }
+                    const long long last = camState->lastFrameMs.load();
+                    const long long now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
+                    if (last > switchMs) {
+                        seenHardFrame = true;
+                        if ((now - last) > 300) {
+                            break;
+                        }
+                    } else if ((now - switchMs) > 300) {
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+                }
+
+                camSvc->applyTrigger("On", "Software", err);
+                QMetaObject::invokeMethod(this, [this, trigStatusLabel, capTopStatus, seenHardFrame, camState]() {
+                    ui->capComboTrigMode->setCurrentText("On");
+                    ui->capComboTrigSrc->setCurrentText("Software");
+                    trigStatusLabel->setText(QStringLiteral("● 当前触发模式：软触发/Software"));
+                    trigStatusLabel->setStyleSheet("color:#2F86F6;font-weight:600;");
+                    appendCapLog(seenHardFrame
+                        ? QStringLiteral("检测到投射结束（0.3s无硬触发帧），自动切换为软触发；投影仪投射保持正常")
+                        : QStringLiteral("0.3s内未收到硬触发信号，自动切换为软触发；投影仪投射保持正常"));
+                    capTopStatus->setText(QStringLiteral("相机分辨率：- | 帧率：0.00 fps | 累计帧数：%1 | 当前触发模式：On/Software")
+                        .arg(camState->totalFrames.load()));
+                }, Qt::QueuedConnection);
+                camState->fallbackSwitching.store(false);
+            }).detach();
+        }
     });
 
     // ---- 连续采集按钮（双投影仪循环投射切换） ----
@@ -1258,6 +1778,234 @@ void MainWindow::setupProjectorManager() {
         if (!dir.isEmpty()) {
             ui->capEditFolder->setText(dir);
             appendCapLog(QStringLiteral("采集文件夹设置为: ") + dir);
+        }
+    });
+
+    // ---- 自动采集非模态窗口 ----
+    connect(autoCapBtn, &QPushButton::clicked, this, [this, autoUi, autoCapState, camState, appendAutoLog,
+            makeNextNumericSessionDir, currentMs]() {
+        if (!autoUi->dlg) {
+            autoUi->dlg = new QDialog(this);
+            autoUi->dlg->setWindowTitle(QStringLiteral("自动采集配置"));
+            autoUi->dlg->setAttribute(Qt::WA_DeleteOnClose, false);
+            autoUi->dlg->setModal(false);
+            autoUi->dlg->resize(860, 680);
+            autoUi->dlg->setStyleSheet(
+                "QDialog{background:#FFFFFF;color:#333333;}"
+                "QGroupBox{border:1px solid #E5E5E5;margin-top:8px;font-weight:600;background:#FFFFFF;}"
+                "QGroupBox::title{subcontrol-origin: margin;left:8px;padding:0 4px;color:#333333;}"
+                "QLineEdit,QComboBox,QSpinBox,QTextEdit{background:#FFFFFF;color:#333333;border:1px solid #E5E5E5;padding:3px;}"
+                "QPushButton{background:#FFFFFF;color:#333333;border:1px solid #E5E5E5;padding:4px 10px;}"
+                "QPushButton:hover{background:#F5F5F5;}"
+                "QLabel{color:#333333;}"
+            );
+
+            auto* root = new QVBoxLayout(autoUi->dlg);
+
+            auto* basicBox = new QGroupBox(QStringLiteral("基本参数"), autoUi->dlg);
+            auto* basicLay = new QHBoxLayout(basicBox);
+            auto* fpsSpin = new QSpinBox(basicBox); fpsSpin->setRange(1, 240); fpsSpin->setValue(20);
+            auto* resCombo = new QComboBox(basicBox); resCombo->addItems({"1920×1080", "1280×720", "640×480"});
+            auto* expSpin = new QSpinBox(basicBox); expSpin->setRange(10, 1000000); expSpin->setValue(30000);
+            basicLay->addWidget(new QLabel(QStringLiteral("帧率:"), basicBox)); basicLay->addWidget(fpsSpin);
+            basicLay->addWidget(new QLabel(QStringLiteral("分辨率:"), basicBox)); basicLay->addWidget(resCombo);
+            basicLay->addWidget(new QLabel(QStringLiteral("曝光值:"), basicBox)); basicLay->addWidget(expSpin);
+
+            auto* limitBox = new QGroupBox(QStringLiteral("录像/存图帧数或时长限制"), autoUi->dlg);
+            auto* limitLay = new QHBoxLayout(limitBox);
+            autoUi->maxFrameSpin = new QSpinBox(limitBox); autoUi->maxFrameSpin->setRange(0, 10000000); autoUi->maxFrameSpin->setValue(0);
+            autoUi->maxTimeSpin = new QSpinBox(limitBox); autoUi->maxTimeSpin->setRange(0, 10000000); autoUi->maxTimeSpin->setValue(0);
+            autoUi->limitFrameRadio = new QRadioButton(QStringLiteral("帧"), limitBox);
+            autoUi->limitSecRadio = new QRadioButton(QStringLiteral("秒"), limitBox);
+            autoUi->limitMinRadio = new QRadioButton(QStringLiteral("分钟"), limitBox);
+            autoUi->limitFrameRadio->setChecked(true);
+            limitLay->addWidget(new QLabel(QStringLiteral("最大帧数:"), limitBox)); limitLay->addWidget(autoUi->maxFrameSpin);
+            limitLay->addSpacing(16);
+            limitLay->addWidget(new QLabel(QStringLiteral("最大时长:"), limitBox)); limitLay->addWidget(autoUi->maxTimeSpin);
+            limitLay->addSpacing(10);
+            limitLay->addWidget(autoUi->limitFrameRadio);
+            limitLay->addWidget(autoUi->limitSecRadio);
+            limitLay->addWidget(autoUi->limitMinRadio);
+
+            auto* saveBox = new QGroupBox(QStringLiteral("保存文件设置"), autoUi->dlg);
+            auto* saveLay = new QVBoxLayout(saveBox);
+
+            auto* pathRow = new QHBoxLayout();
+            autoUi->pro1Edit = new QLineEdit(saveBox);
+            autoUi->pro2Edit = new QLineEdit(saveBox);
+            autoUi->pro1Edit->setPlaceholderText(QStringLiteral("Pro1文件保存路径"));
+            autoUi->pro2Edit->setPlaceholderText(QStringLiteral("Pro2文件保存路径"));
+            auto* pro1Browse = new QPushButton(QStringLiteral("浏览"), saveBox);
+            auto* pro2Browse = new QPushButton(QStringLiteral("浏览"), saveBox);
+            pathRow->addWidget(new QLabel(QStringLiteral("Pro1文件保存路径:"), saveBox));
+            pathRow->addWidget(autoUi->pro1Edit); pathRow->addWidget(pro1Browse);
+            pathRow->addSpacing(10);
+            pathRow->addWidget(new QLabel(QStringLiteral("Pro2文件保存路径:"), saveBox));
+            pathRow->addWidget(autoUi->pro2Edit); pathRow->addWidget(pro2Browse);
+            saveLay->addLayout(pathRow);
+
+            auto* imgRow = new QHBoxLayout();
+            autoUi->saveEnableCheck = new QCheckBox(QStringLiteral("存图"), saveBox);
+            autoUi->saveEnableCheck->setChecked(true);
+            autoUi->fmtCombo = new QComboBox(saveBox); autoUi->fmtCombo->addItems({"BMP", "PNG", "JPG"});
+            autoUi->byFrameRadio = new QRadioButton(QStringLiteral("按帧数"), saveBox); autoUi->byFrameRadio->setChecked(true);
+            autoUi->byTimeRadio = new QRadioButton(QStringLiteral("按时间"), saveBox);
+            autoUi->intervalSpin = new QSpinBox(saveBox); autoUi->intervalSpin->setRange(1, 1000000); autoUi->intervalSpin->setValue(1);
+            imgRow->addWidget(autoUi->saveEnableCheck);
+            imgRow->addSpacing(8);
+            imgRow->addWidget(new QLabel(QStringLiteral("图片格式:"), saveBox));
+            imgRow->addWidget(autoUi->fmtCombo);
+            imgRow->addSpacing(20);
+            imgRow->addWidget(autoUi->byFrameRadio);
+            imgRow->addWidget(autoUi->byTimeRadio);
+            imgRow->addWidget(new QLabel(QStringLiteral("间隔值:"), saveBox));
+            imgRow->addWidget(autoUi->intervalSpin);
+            saveLay->addLayout(imgRow);
+
+            auto* trigRow = new QHBoxLayout();
+            auto* actPro1Btn = new QPushButton(QStringLiteral("Pro1触发"), saveBox);
+            auto* actPro2Btn = new QPushButton(QStringLiteral("Pro2触发"), saveBox);
+            trigRow->addWidget(actPro1Btn);
+            trigRow->addWidget(actPro2Btn);
+            trigRow->addStretch(1);
+            saveLay->addLayout(trigRow);
+
+            auto* infoBox = new QGroupBox(QStringLiteral("信息"), autoUi->dlg);
+            auto* infoLay = new QVBoxLayout(infoBox);
+            autoUi->infoBuffer = new QLabel(QStringLiteral("Buffer占用比：0%"), infoBox);
+            autoUi->infoDisk = new QLabel(QStringLiteral("硬盘剩余帧数：-"), infoBox);
+            autoUi->infoTotal = new QLabel(QStringLiteral("已采集帧数：0"), infoBox);
+            infoLay->addWidget(autoUi->infoBuffer);
+            infoLay->addWidget(autoUi->infoDisk);
+            infoLay->addWidget(autoUi->infoTotal);
+
+            auto* logBox = new QGroupBox(QStringLiteral("信息日志"), autoUi->dlg);
+            auto* logLay = new QVBoxLayout(logBox);
+            autoUi->log = new QTextEdit(logBox);
+            autoUi->log->setReadOnly(true);
+            autoUi->log->setMinimumHeight(170);
+            auto* clearLogBtn = new QPushButton(QStringLiteral("清空日志"), logBox);
+            logLay->addWidget(autoUi->log);
+            logLay->addWidget(clearLogBtn, 0, Qt::AlignRight);
+
+            auto* buttons = new QDialogButtonBox(Qt::Horizontal, autoUi->dlg);
+            auto* okBtn = buttons->addButton(QStringLiteral("确认"), QDialogButtonBox::AcceptRole);
+            auto* cancelBtn = buttons->addButton(QStringLiteral("取消"), QDialogButtonBox::RejectRole);
+            auto* applyBtn = buttons->addButton(QStringLiteral("应用"), QDialogButtonBox::ApplyRole);
+            Q_UNUSED(okBtn);
+            Q_UNUSED(cancelBtn);
+            Q_UNUSED(applyBtn);
+
+            root->addWidget(basicBox);
+            root->addWidget(limitBox);
+            root->addWidget(saveBox);
+            root->addWidget(infoBox);
+            root->addWidget(logBox, 1);
+            root->addWidget(buttons, 0, Qt::AlignHCenter);
+
+            connect(pro1Browse, &QPushButton::clicked, autoUi->dlg, [this, autoUi]() {
+                const auto dir = QFileDialog::getExistingDirectory(this, QStringLiteral("选择Pro1保存路径"));
+                if (!dir.isEmpty() && autoUi->pro1Edit) autoUi->pro1Edit->setText(dir);
+            });
+            connect(pro2Browse, &QPushButton::clicked, autoUi->dlg, [this, autoUi]() {
+                const auto dir = QFileDialog::getExistingDirectory(this, QStringLiteral("选择Pro2保存路径"));
+                if (!dir.isEmpty() && autoUi->pro2Edit) autoUi->pro2Edit->setText(dir);
+            });
+
+            auto applyDialogState = [autoCapState, autoUi]() {
+                std::lock_guard<std::mutex> lock(autoCapState->mtx);
+                if (autoUi->pro1Edit) autoCapState->pro1Base = autoUi->pro1Edit->text().trimmed();
+                if (autoUi->pro2Edit) autoCapState->pro2Base = autoUi->pro2Edit->text().trimmed();
+                if (autoUi->fmtCombo) autoCapState->imageFormat = autoUi->fmtCombo->currentText().trimmed();
+                if (autoUi->saveEnableCheck) autoCapState->enableSave = autoUi->saveEnableCheck->isChecked();
+                if (autoUi->byFrameRadio && autoUi->byFrameRadio->isChecked()) autoCapState->intervalMode = 0;
+                else if (autoUi->byTimeRadio && autoUi->byTimeRadio->isChecked()) autoCapState->intervalMode = 1;
+                if (autoUi->intervalSpin) autoCapState->intervalValue = std::max(1, autoUi->intervalSpin->value());
+                if (autoUi->limitFrameRadio && autoUi->limitFrameRadio->isChecked()) autoCapState->limitMode = 0;
+                else if (autoUi->limitSecRadio && autoUi->limitSecRadio->isChecked()) autoCapState->limitMode = 1;
+                else if (autoUi->limitMinRadio && autoUi->limitMinRadio->isChecked()) autoCapState->limitMode = 2;
+                if (autoUi->maxFrameSpin) autoCapState->maxFrameLimit = autoUi->maxFrameSpin->value();
+                if (autoUi->maxTimeSpin) autoCapState->maxTimeLimit = autoUi->maxTimeSpin->value();
+            };
+
+            connect(buttons, &QDialogButtonBox::accepted, autoUi->dlg, [applyDialogState, autoUi]() {
+                applyDialogState();
+                if (autoUi->dlg) autoUi->dlg->hide();
+            });
+            connect(buttons, &QDialogButtonBox::rejected, autoUi->dlg, [autoUi]() {
+                if (autoUi->dlg) autoUi->dlg->hide();
+            });
+            connect(applyBtn, &QPushButton::clicked, autoUi->dlg, [applyDialogState, appendAutoLog]() {
+                applyDialogState();
+                appendAutoLog(QStringLiteral("自动采集参数已应用"));
+            });
+
+            connect(clearLogBtn, &QPushButton::clicked, autoUi->dlg, [autoUi]() {
+                if (autoUi->log) autoUi->log->clear();
+            });
+
+            connect(actPro1Btn, &QPushButton::clicked, autoUi->dlg, [autoCapState, autoUi, appendAutoLog, makeNextNumericSessionDir, currentMs]() {
+                if (!autoUi->pro1Edit || autoUi->pro1Edit->text().trimmed().isEmpty()) {
+                    appendAutoLog(QStringLiteral("Pro1路径为空，请先选择路径"));
+                    return;
+                }
+                std::lock_guard<std::mutex> lock(autoCapState->mtx);
+                autoCapState->activeProjector = 1;
+                autoCapState->pro1Base = autoUi->pro1Edit->text().trimmed();
+                autoCapState->activeSessionDir = makeNextNumericSessionDir(autoCapState->pro1Base);
+                autoCapState->nextImageIndex = 1;
+                autoCapState->savedCount = 0;
+                autoCapState->sampledFrames = 0;
+                autoCapState->sessionStartMs = currentMs();
+                autoCapState->lastSavedMs = 0;
+                autoCapState->lastSavedFrameTotal = 0;
+                appendAutoLog(QStringLiteral("Pro1触发激活，当前会话目录: %1").arg(autoCapState->activeSessionDir));
+            });
+            connect(actPro2Btn, &QPushButton::clicked, autoUi->dlg, [autoCapState, autoUi, appendAutoLog, makeNextNumericSessionDir, currentMs]() {
+                if (!autoUi->pro2Edit || autoUi->pro2Edit->text().trimmed().isEmpty()) {
+                    appendAutoLog(QStringLiteral("Pro2路径为空，请先选择路径"));
+                    return;
+                }
+                std::lock_guard<std::mutex> lock(autoCapState->mtx);
+                autoCapState->activeProjector = 2;
+                autoCapState->pro2Base = autoUi->pro2Edit->text().trimmed();
+                autoCapState->activeSessionDir = makeNextNumericSessionDir(autoCapState->pro2Base);
+                autoCapState->nextImageIndex = 1;
+                autoCapState->savedCount = 0;
+                autoCapState->sampledFrames = 0;
+                autoCapState->sessionStartMs = currentMs();
+                autoCapState->lastSavedMs = 0;
+                autoCapState->lastSavedFrameTotal = 0;
+                appendAutoLog(QStringLiteral("Pro2触发激活，当前会话目录: %1").arg(autoCapState->activeSessionDir));
+            });
+
+            auto* infoTimer = new QTimer(autoUi->dlg);
+            infoTimer->setInterval(400);
+            connect(infoTimer, &QTimer::timeout, autoUi->dlg, [autoCapState, camState, autoUi]() {
+                if (!autoUi->infoBuffer || !autoUi->infoDisk || !autoUi->infoTotal) return;
+                long long saved = 0;
+                {
+                    std::lock_guard<std::mutex> lock(autoCapState->mtx);
+                    saved = autoCapState->savedCount;
+                }
+                const long long total = camState->totalFrames.load();
+                const long long bufferPct = (total <= 0) ? 0 : std::min<long long>(100, (saved * 100) / std::max<long long>(1, total));
+                autoUi->infoBuffer->setText(QStringLiteral("Buffer占用比：%1%").arg(bufferPct));
+
+                QStorageInfo si(QDir::currentPath());
+                const qint64 bytes = si.bytesAvailable();
+                const qint64 estFrameBytes = 1024 * 1024;
+                const qint64 remainFrames = estFrameBytes > 0 ? bytes / estFrameBytes : 0;
+                autoUi->infoDisk->setText(QStringLiteral("硬盘剩余帧数：%1").arg(remainFrames));
+                autoUi->infoTotal->setText(QStringLiteral("已采集帧数：%1").arg(total));
+            });
+            infoTimer->start();
+        }
+
+        if (autoUi->dlg) {
+            autoUi->dlg->show();
+            autoUi->dlg->raise();
+            autoUi->dlg->activateWindow();
         }
     });
 }
